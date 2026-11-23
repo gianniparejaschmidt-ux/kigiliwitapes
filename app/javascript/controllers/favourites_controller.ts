@@ -35,7 +35,7 @@ export default class extends Controller {
 
         if (this.hasGridTarget)
             this.renderFavourites();
-        
+
         if (this.hasShowFavouriteButtonTarget)
             this.updateShowFavoriteButton(this.showFavouriteButtonTarget);
     }
@@ -51,7 +51,7 @@ export default class extends Controller {
 
         const playerElement = document.querySelector('#player') as HTMLElement;
         const playerController = this.application.getControllerForElementAndIdentifier(playerElement, 'player') as PlayerController;
-        
+
         await playerController.updateFavouriteIcon();
 
         if (this.hasShowFavouriteButtonTarget)
@@ -84,7 +84,7 @@ export default class extends Controller {
         const slug = showElement.dataset.slug;
 
         const isFavourite = await IsSlugFavourited(slug);
-        
+
         const icon = button.querySelector('.favourite-icon');
         const text = button.querySelector('span');
 
@@ -119,7 +119,7 @@ export default class extends Controller {
         this.gridTarget.innerHTML = '';
 
         const favouritesSlugs = await this.getFavouritesSlugs();
-        
+
         if (favouritesSlugs.length === 0) {
             this.gridTarget.innerHTML = `<p class="mb-5">No favourites yet!</p>`;
             this.gridTarget.classList.remove('responsive-grid');
@@ -144,12 +144,18 @@ export default class extends Controller {
                 return response.text();
             }));
 
+
             for (const responseText of responses)
                 await Turbo.renderStreamMessage(responseText);
 
-            this.renderLinkedGroups();
-            this.applyFavouriteSort();
-        } 
+            // Allow Turbo to finish inserting the concert cards
+            // before sorting and grouping them.
+            requestAnimationFrame(() => {
+                this.renderLinkedGroups();
+                this.applyFavouriteSort();
+            });
+
+        }
         catch (error) {
             this.gridTarget.innerHTML = `<p class="mb-5">Failed to load favourites.</p>`;
             this.gridTarget.classList.remove('responsive-grid');
@@ -203,15 +209,16 @@ export default class extends Controller {
             const shows = slugs.map(slug => bySlug.get(slug)!);
             const group = document.createElement('div');
             group.dataset.linkedGroup = "true";
-            group.className = "relative grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 p-3 pt-10 border border-primary rounded-xl";
-            group.style.gridColumn = "1 / -1";
+
+group.className = "linked-show-group";
+
             group.dataset.sortDate = shows.map(show => show.dataset.sortDate || "").sort().reverse()[0];
             group.dataset.sortVenue = shows[0].dataset.sortVenue || "";
             group.dataset.sortCity = shows[0].dataset.sortCity || "";
 
             const unlink = document.createElement('button');
             unlink.type = "button";
-            unlink.className = "btn btn-xs btn-outline absolute right-2 top-2 z-10";
+            unlink.className = "unlink-group-button";
             unlink.textContent = "Unlink group";
             unlink.setAttribute('aria-label', 'Unlink these shows');
             unlink.dataset.action = "click->favourites#unlinkShows";

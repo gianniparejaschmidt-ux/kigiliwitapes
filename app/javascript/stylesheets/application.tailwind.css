@@ -138,3 +138,39 @@
         margin-bottom: 60px !important;
     }
 }
+
+/* Linked favourite concerts */
+.linked-show-group {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  padding: 2.5rem 0.75rem 0.75rem;
+  border: 2px solid #a855f7;
+  border-radius: 0.75rem;
+  grid-column: span 4;
+  min-width: 0;
+}
+
+.linked-show-group .featured-item {
+  min-width: 0;
+}
+
+.linked-show-group .unlink-group-button {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 10;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid currentColor;
+  border-radius: 0.4rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+@media (max-width: 767px) {
+  .linked-show-group {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-column: 1 / -1;
+  }
+}
