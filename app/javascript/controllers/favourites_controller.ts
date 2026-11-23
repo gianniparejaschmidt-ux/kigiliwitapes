@@ -3,8 +3,12 @@ import { db, IsSlugFavourited, GetFavouritesListId } from "../db"
 import * as Turbo from "@hotwired/turbo"
 import PlayerController from "./player_controller";
 
+const SORT_STORAGE_KEY = "gizz-tapes:favourites-sort";
+const DEFAULT_SORT = "date-desc";
+const SORT_OPTIONS = ["date-desc", "date-asc", "venue-asc", "city-asc"];
+
 export default class extends Controller {
-    static targets = ['grid', 'showFavouriteButton', 'featuredShow'];
+    static targets = ['grid', 'showFavouriteButton', 'featuredShow', 'sortSelect'];
 
     declare readonly gridTarget: HTMLElement;
     declare readonly hasGridTarget: boolean;
@@ -12,7 +16,15 @@ export default class extends Controller {
     declare readonly showFavouriteButtonTarget: HTMLElement;
     declare readonly hasShowFavouriteButtonTarget: boolean;
 
+    declare readonly sortSelectTarget: HTMLSelectElement;
+    declare readonly hasSortSelectTarget: boolean;
+
     connect() {
+        if (this.hasSortSelectTarget) {
+            const savedSort = localStorage.getItem(SORT_STORAGE_KEY);
+            this.sortSelectTarget.value = SORT_OPTIONS.includes(savedSort) ? savedSort : DEFAULT_SORT;
+        }
+
         if (this.hasGridTarget)
             this.renderFavourites();
         
@@ -109,7 +121,9 @@ export default class extends Controller {
         }
 
         try {
-            const fetchPromises = favouritesSlugs.map(async (slug) => {
+            // Fetch every show first, then render in list order. Rendering each response
+            // as it arrives makes the card order depend on network timing.
+            const responses = await Promise.all(favouritesSlugs.map(async (slug) => {
                 const response = await fetch(`/${slug}/partials/featured`, {
                     method: "GET",
                     headers: {
@@ -119,12 +133,13 @@ export default class extends Controller {
 
                 if (!response.ok) throw new Error('Fetch failed');
 
-                const text = await response.text();
+                return response.text();
+            }));
 
-                await Turbo.renderStreamMessage(text);
-            });
+            for (const responseText of responses)
+                await Turbo.renderStreamMessage(responseText);
 
-            await Promise.all(fetchPromises);
+            this.applyFavouriteSort();
         } 
         catch (error) {
             this.gridTarget.innerHTML = `<p class="mb-5">Failed to load favourites.</p>`;
@@ -132,6 +147,48 @@ export default class extends Controller {
         }
 
         this.gridTarget.removeAttribute('busy');
+    }
+
+    sortFavourites() {
+        const sort = this.sortSelectTarget.value;
+        localStorage.setItem(SORT_STORAGE_KEY, SORT_OPTIONS.includes(sort) ? sort : DEFAULT_SORT);
+        this.applyFavouriteSort();
+    }
+
+    shuffleFavourites() {
+        const shows = Array.from(this.gridTarget.querySelectorAll<HTMLElement>('.featured-item'));
+
+        // Fisher–Yates shuffle.
+        for (let i = shows.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shows[i], shows[j]] = [shows[j], shows[i]];
+        }
+
+        shows.forEach(show => this.gridTarget.appendChild(show));
+    }
+
+    applyFavouriteSort() {
+        const sort = this.hasSortSelectTarget ? this.sortSelectTarget.value : DEFAULT_SORT;
+        const shows = Array.from(this.gridTarget.querySelectorAll<HTMLElement>('.featured-item'));
+        const collator = new Intl.Collator(undefined, { sensitivity: "base", numeric: true });
+
+        const valueFor = (show: HTMLElement, key: string) => show.dataset[key] || "";
+
+        shows.sort((a, b) => {
+            switch (sort) {
+                case "date-asc":
+                    return valueFor(a, "sortDate").localeCompare(valueFor(b, "sortDate"));
+                case "venue-asc":
+                    return collator.compare(valueFor(a, "sortVenue"), valueFor(b, "sortVenue"));
+                case "city-asc":
+                    return collator.compare(valueFor(a, "sortCity"), valueFor(b, "sortCity"));
+                case "date-desc":
+                default:
+                    return valueFor(b, "sortDate").localeCompare(valueFor(a, "sortDate"));
+            }
+        });
+
+        shows.forEach(show => this.gridTarget.appendChild(show));
     }
 
     async getFavouritesSlugs() {
