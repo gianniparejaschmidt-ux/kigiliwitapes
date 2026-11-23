@@ -11,6 +11,31 @@
 
     <div class="card bg-base-100 shadow-xl mb-5">
         <div class="card-body py-5 px-3">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4 px-2">
+                <label class="flex items-center gap-2 text-sm">
+                    <span>Sort by</span>
+                    <select
+                        data-favourites-target="sortSelect"
+                        data-action="change->favourites#sortFavourites"
+                        class="select select-bordered select-sm"
+                        aria-label="Sort favourite shows"
+                    >
+                        <option value="date-desc">Date: newest first</option>
+                        <option value="date-asc">Date: oldest first</option>
+                        <option value="venue-asc">Venue: A–Z</option>
+                        <option value="city-asc">City: A–Z</option>
+                    </select>
+                </label>
+
+                <button
+                    type="button"
+                    data-action="click->favourites#shuffleFavourites"
+                    class="btn btn-outline btn-sm"
+                >
+                    Shuffle
+                </button>
+            </div>
+
             <div busy data-favourites-target="grid" id="favourites-grid" class="responsive-grid">
            
             </div>
