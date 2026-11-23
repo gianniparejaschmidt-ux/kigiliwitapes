@@ -119,6 +119,12 @@ export default class extends Controller {
         this.gridTarget.innerHTML = '';
 
         const favouritesSlugs = await this.getFavouritesSlugs();
+        const favouriteSet = new Set(favouritesSlugs);
+        const validGroups = this.savedGroups()
+            .map(group => group.filter(slug => favouriteSet.has(slug)))
+            .filter(group => group.length >= 2);
+
+        this.saveGroups(validGroups);
 
         if (favouritesSlugs.length === 0) {
             this.gridTarget.innerHTML = `<p class="mb-5">No favourites yet!</p>`;
@@ -210,7 +216,8 @@ export default class extends Controller {
             const group = document.createElement('div');
             group.dataset.linkedGroup = "true";
 
-group.className = "linked-show-group";
+            group.className = "linked-show-group";
+            group.style.setProperty("--group-size", String(shows.length));
 
             group.dataset.sortDate = shows.map(show => show.dataset.sortDate || "").sort().reverse()[0];
             group.dataset.sortVenue = shows[0].dataset.sortVenue || "";
