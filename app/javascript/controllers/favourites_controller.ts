@@ -22,7 +22,7 @@ export default class extends Controller {
     connect() {
         if (this.hasSortSelectTarget) {
             const savedSort = localStorage.getItem(SORT_STORAGE_KEY);
-            this.sortSelectTarget.value = SORT_OPTIONS.includes(savedSort) ? savedSort : DEFAULT_SORT;
+            this.sortSelectTarget.value = savedSort !== null && SORT_OPTIONS.includes(savedSort) ? savedSort : DEFAULT_SORT;
         }
 
         if (this.hasGridTarget)
