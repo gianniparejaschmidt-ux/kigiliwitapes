@@ -2,6 +2,9 @@
   href="/<%= show.slug %>"
   data-turbo-frame="_top"
   data-favourites-target="featuredShow"
+  data-sort-date="<%= show.date.iso8601 %>"
+  data-sort-venue="<%= show.venue.name %>"
+  data-sort-city="<%= show.venue.city %>"
   class="featured-item featured-show"
 >
   <div class="indicator w-full">
