@@ -3,12 +3,13 @@ import { db, IsSlugFavourited, GetFavouritesListId } from "../db"
 import * as Turbo from "@hotwired/turbo"
 import PlayerController from "./player_controller";
 
+const PAIRS_STORAGE_KEY = "gizz-tapes:favourite-pairs";
 const SORT_STORAGE_KEY = "gizz-tapes:favourites-sort";
 const DEFAULT_SORT = "date-desc";
 const SORT_OPTIONS = ["date-desc", "date-asc", "venue-asc", "city-asc"];
 
 export default class extends Controller {
-    static targets = ['grid', 'showFavouriteButton', 'featuredShow', 'sortSelect'];
+    static targets = ['grid', 'showFavouriteButton', 'featuredShow', 'sortSelect', 'linkButton', 'linkStatus'];
 
     declare readonly gridTarget: HTMLElement;
     declare readonly hasGridTarget: boolean;
@@ -18,6 +19,12 @@ export default class extends Controller {
 
     declare readonly sortSelectTarget: HTMLSelectElement;
     declare readonly hasSortSelectTarget: boolean;
+
+    declare readonly linkButtonTarget: HTMLButtonElement;
+    declare readonly linkStatusTarget: HTMLElement;
+
+    private linking = false;
+    private selectedSlugs: string[] = [];
 
     connect() {
         if (this.hasSortSelectTarget) {
@@ -139,6 +146,7 @@ export default class extends Controller {
             for (const responseText of responses)
                 await Turbo.renderStreamMessage(responseText);
 
+            this.renderLinkedPairs();
             this.applyFavouriteSort();
         } 
         catch (error) {
@@ -155,10 +163,136 @@ export default class extends Controller {
         this.applyFavouriteSort();
     }
 
-    shuffleFavourites() {
-        const shows = Array.from(this.gridTarget.querySelectorAll<HTMLElement>('.featured-item'));
+    private showSlug(show: HTMLElement): string {
+        return show.getAttribute('href')?.replace(/^\\//, '') || "";
+    }
 
-        // Fisher–Yates shuffle.
+    private savedPairs(): string[][] {
+        try {
+            const stored = JSON.parse(localStorage.getItem(PAIRS_STORAGE_KEY) || "[]");
+            if (!Array.isArray(stored)) return [];
+            const used = new Set<string>();
+            return stored.filter((pair): pair is string[] => {
+                if (!Array.isArray(pair) || pair.length !== 2 ||
+                    pair.some(slug => typeof slug !== "string" || !slug || used.has(slug)) ||
+                    pair[0] === pair[1]) return false;
+                pair.forEach(slug => used.add(slug));
+                return true;
+            });
+        } catch {
+            return [];
+        }
+    }
+
+    private savePairs(pairs: string[][]) {
+        localStorage.setItem(PAIRS_STORAGE_KEY, JSON.stringify(pairs));
+    }
+
+    private renderLinkedPairs() {
+        // Restore standalone cards before rebuilding pairs.
+        this.gridTarget.querySelectorAll<HTMLElement>('[data-linked-pair]').forEach(group => {
+            const cards = Array.from(group.querySelectorAll<HTMLElement>('.featured-item'));
+            group.replaceWith(...cards);
+        });
+
+        const cards = Array.from(this.gridTarget.querySelectorAll<HTMLElement>('.featured-item'));
+        const bySlug = new Map(cards.map(card => [this.showSlug(card), card]));
+        const pairs = this.savedPairs().filter(pair => pair.every(slug => bySlug.has(slug)));
+        // Retain pairs for favourites that may temporarily fail to load.
+        for (const [first, second] of pairs) {
+            const a = bySlug.get(first)!;
+            const b = bySlug.get(second)!;
+            const group = document.createElement('div');
+            group.dataset.linkedPair = "true";
+            group.className = "relative grid grid-cols-2 gap-3 p-3 border border-primary rounded-xl";
+            group.style.gridColumn = "1 / -1";
+            group.dataset.sortDate = [a.dataset.sortDate || "", b.dataset.sortDate || ""].sort().reverse()[0];
+            group.dataset.sortVenue = a.dataset.sortVenue || "";
+            group.dataset.sortCity = a.dataset.sortCity || "";
+
+            const unlink = document.createElement('button');
+            unlink.type = "button";
+            unlink.className = "btn btn-xs btn-outline absolute right-2 top-2 z-10";
+            unlink.textContent = "Unlink";
+            unlink.setAttribute('aria-label', 'Unlink these two shows');
+            unlink.dataset.action = "click->favourites#unlinkShows";
+
+            group.append(a, b, unlink);
+            this.gridTarget.appendChild(group);
+        }
+    }
+
+    toggleLinkMode() {
+        this.linking = !this.linking;
+        this.selectedSlugs = [];
+        this.updateLinkControls();
+    }
+
+    selectShow(event: MouseEvent) {
+        if (!this.linking) return;
+        const card = (event.target as HTMLElement).closest<HTMLElement>('.featured-item');
+        if (!card || !this.gridTarget.contains(card)) return;
+        event.preventDefault();
+        event.stopPropagation();
+
+        const slug = this.showSlug(card);
+        if (!slug) return;
+        const pairs = this.savedPairs();
+        if (pairs.some(pair => pair.includes(slug))) {
+            this.linkStatusTarget.textContent = "This show is already linked. Unlink it first.";
+            return;
+        }
+
+        if (this.selectedSlugs.includes(slug))
+            this.selectedSlugs = this.selectedSlugs.filter(selected => selected !== slug);
+        else if (this.selectedSlugs.length < 2)
+            this.selectedSlugs.push(slug);
+
+        if (this.selectedSlugs.length === 2) {
+            this.savePairs([...pairs, [...this.selectedSlugs]]);
+            this.selectedSlugs = [];
+            this.linking = false;
+            this.renderLinkedPairs();
+            this.applyFavouriteSort();
+        }
+        this.updateLinkControls();
+    }
+
+    unlinkShows(event: MouseEvent) {
+        event.preventDefault();
+        event.stopPropagation();
+        const group = (event.target as HTMLElement).closest<HTMLElement>('[data-linked-pair]');
+        if (!group) return;
+        const slugs = Array.from(group.querySelectorAll<HTMLElement>('.featured-item')).map(card => this.showSlug(card));
+        this.savePairs(this.savedPairs().filter(pair => !pair.every(slug => slugs.includes(slug))));
+        this.renderLinkedPairs();
+        this.applyFavouriteSort();
+    }
+
+    private updateLinkControls() {
+        this.linkButtonTarget.textContent = this.linking ? "Cancel linking" : "Link shows";
+        this.linkStatusTarget.textContent = this.linking
+            ? `Select two unlinked shows (${this.selectedSlugs.length}/2)`
+            : "";
+        this.gridTarget.querySelectorAll<HTMLElement>('.featured-item').forEach(card => {
+            const selected = this.selectedSlugs.includes(this.showSlug(card));
+            card.classList.toggle('ring-4', selected);
+            card.classList.toggle('ring-primary', selected);
+            card.classList.toggle('cursor-crosshair', this.linking);
+        });
+    }
+
+    private sortableItems(): HTMLElement[] {
+        return Array.from(this.gridTarget.children).filter((element): element is HTMLElement =>
+            element instanceof HTMLElement &&
+            (element.matches('.featured-item') || element.hasAttribute('data-linked-pair'))
+        );
+    }
+
+    shuffleFavourites() {
+        const shows = this.sortableItems();
+
+        // Shuffle linked pairs as units, keeping both posters together.
         for (let i = shows.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [shows[i], shows[j]] = [shows[j], shows[i]];
@@ -169,7 +303,7 @@ export default class extends Controller {
 
     applyFavouriteSort() {
         const sort = this.hasSortSelectTarget ? this.sortSelectTarget.value : DEFAULT_SORT;
-        const shows = Array.from(this.gridTarget.querySelectorAll<HTMLElement>('.featured-item'));
+        const shows = this.sortableItems();
         const collator = new Intl.Collator(undefined, { sensitivity: "base", numeric: true });
 
         const valueFor = (show: HTMLElement, key: string) => show.dataset[key] || "";
