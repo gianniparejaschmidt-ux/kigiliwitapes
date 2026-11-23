@@ -3,13 +3,13 @@ import { db, IsSlugFavourited, GetFavouritesListId } from "../db"
 import * as Turbo from "@hotwired/turbo"
 import PlayerController from "./player_controller";
 
-const PAIRS_STORAGE_KEY = "gizz-tapes:favourite-pairs";
+const GROUPS_STORAGE_KEY = "gizz-tapes:favourite-pairs"; // Keep existing saved pairs compatible.
 const SORT_STORAGE_KEY = "gizz-tapes:favourites-sort";
 const DEFAULT_SORT = "date-desc";
 const SORT_OPTIONS = ["date-desc", "date-asc", "venue-asc", "city-asc"];
 
 export default class extends Controller {
-    static targets = ['grid', 'showFavouriteButton', 'featuredShow', 'sortSelect', 'linkButton', 'linkStatus'];
+    static targets = ['grid', 'showFavouriteButton', 'featuredShow', 'sortSelect', 'linkButton', 'linkStatus', 'linkFinish'];
 
     declare readonly gridTarget: HTMLElement;
     declare readonly hasGridTarget: boolean;
@@ -22,6 +22,7 @@ export default class extends Controller {
 
     declare readonly linkButtonTarget: HTMLButtonElement;
     declare readonly linkStatusTarget: HTMLElement;
+    declare readonly linkFinishTarget: HTMLButtonElement;
 
     private linking = false;
     private selectedSlugs: string[] = [];
@@ -146,7 +147,7 @@ export default class extends Controller {
             for (const responseText of responses)
                 await Turbo.renderStreamMessage(responseText);
 
-            this.renderLinkedPairs();
+            this.renderLinkedGroups();
             this.applyFavouriteSort();
         } 
         catch (error) {
@@ -164,19 +165,19 @@ export default class extends Controller {
     }
 
     private showSlug(show: HTMLElement): string {
-        return show.getAttribute('href')?.replace(/^\\//, '') || "";
+        return new URL(show.getAttribute('href') || '', window.location.origin).pathname.replace(/^\//, '');
     }
 
-    private savedPairs(): string[][] {
+    private savedGroups(): string[][] {
         try {
-            const stored = JSON.parse(localStorage.getItem(PAIRS_STORAGE_KEY) || "[]");
+            const stored = JSON.parse(localStorage.getItem(GROUPS_STORAGE_KEY) || "[]");
             if (!Array.isArray(stored)) return [];
             const used = new Set<string>();
-            return stored.filter((pair): pair is string[] => {
-                if (!Array.isArray(pair) || pair.length !== 2 ||
-                    pair.some(slug => typeof slug !== "string" || !slug || used.has(slug)) ||
-                    pair[0] === pair[1]) return false;
-                pair.forEach(slug => used.add(slug));
+            return stored.filter((group): group is string[] => {
+                if (!Array.isArray(group) || group.length < 2 ||
+                    group.some(slug => typeof slug !== "string" || !slug || used.has(slug)) ||
+                    new Set(group).size !== group.length) return false;
+                group.forEach(slug => used.add(slug));
                 return true;
             });
         } catch {
@@ -184,40 +185,38 @@ export default class extends Controller {
         }
     }
 
-    private savePairs(pairs: string[][]) {
-        localStorage.setItem(PAIRS_STORAGE_KEY, JSON.stringify(pairs));
+    private saveGroups(groups: string[][]) {
+        localStorage.setItem(GROUPS_STORAGE_KEY, JSON.stringify(groups));
     }
 
-    private renderLinkedPairs() {
-        // Restore standalone cards before rebuilding pairs.
-        this.gridTarget.querySelectorAll<HTMLElement>('[data-linked-pair]').forEach(group => {
+    private renderLinkedGroups() {
+        this.gridTarget.querySelectorAll<HTMLElement>('[data-linked-group]').forEach(group => {
             const cards = Array.from(group.querySelectorAll<HTMLElement>('.featured-item'));
             group.replaceWith(...cards);
         });
 
         const cards = Array.from(this.gridTarget.querySelectorAll<HTMLElement>('.featured-item'));
         const bySlug = new Map(cards.map(card => [this.showSlug(card), card]));
-        const pairs = this.savedPairs().filter(pair => pair.every(slug => bySlug.has(slug)));
-        // Retain pairs for favourites that may temporarily fail to load.
-        for (const [first, second] of pairs) {
-            const a = bySlug.get(first)!;
-            const b = bySlug.get(second)!;
+        const groups = this.savedGroups().filter(group => group.every(slug => bySlug.has(slug)));
+
+        for (const slugs of groups) {
+            const shows = slugs.map(slug => bySlug.get(slug)!);
             const group = document.createElement('div');
-            group.dataset.linkedPair = "true";
-            group.className = "relative grid grid-cols-2 gap-3 p-3 border border-primary rounded-xl";
+            group.dataset.linkedGroup = "true";
+            group.className = "relative grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 p-3 pt-10 border border-primary rounded-xl";
             group.style.gridColumn = "1 / -1";
-            group.dataset.sortDate = [a.dataset.sortDate || "", b.dataset.sortDate || ""].sort().reverse()[0];
-            group.dataset.sortVenue = a.dataset.sortVenue || "";
-            group.dataset.sortCity = a.dataset.sortCity || "";
+            group.dataset.sortDate = shows.map(show => show.dataset.sortDate || "").sort().reverse()[0];
+            group.dataset.sortVenue = shows[0].dataset.sortVenue || "";
+            group.dataset.sortCity = shows[0].dataset.sortCity || "";
 
             const unlink = document.createElement('button');
             unlink.type = "button";
             unlink.className = "btn btn-xs btn-outline absolute right-2 top-2 z-10";
-            unlink.textContent = "Unlink";
-            unlink.setAttribute('aria-label', 'Unlink these two shows');
+            unlink.textContent = "Unlink group";
+            unlink.setAttribute('aria-label', 'Unlink these shows');
             unlink.dataset.action = "click->favourites#unlinkShows";
 
-            group.append(a, b, unlink);
+            group.append(...shows, unlink);
             this.gridTarget.appendChild(group);
         }
     }
@@ -237,42 +236,47 @@ export default class extends Controller {
 
         const slug = this.showSlug(card);
         if (!slug) return;
-        const pairs = this.savedPairs();
-        if (pairs.some(pair => pair.includes(slug))) {
-            this.linkStatusTarget.textContent = "This show is already linked. Unlink it first.";
+        if (this.savedGroups().some(group => group.includes(slug))) {
+            this.linkStatusTarget.textContent = "This show is already linked. Unlink its group first.";
             return;
         }
 
         if (this.selectedSlugs.includes(slug))
             this.selectedSlugs = this.selectedSlugs.filter(selected => selected !== slug);
-        else if (this.selectedSlugs.length < 2)
+        else
             this.selectedSlugs.push(slug);
 
-        if (this.selectedSlugs.length === 2) {
-            this.savePairs([...pairs, [...this.selectedSlugs]]);
-            this.selectedSlugs = [];
-            this.linking = false;
-            this.renderLinkedPairs();
-            this.applyFavouriteSort();
-        }
+        this.updateLinkControls();
+    }
+
+    finishLinking() {
+        if (this.selectedSlugs.length < 2) return;
+        this.saveGroups([...this.savedGroups(), [...this.selectedSlugs]]);
+        this.selectedSlugs = [];
+        this.linking = false;
+        this.renderLinkedGroups();
+        this.applyFavouriteSort();
         this.updateLinkControls();
     }
 
     unlinkShows(event: MouseEvent) {
         event.preventDefault();
         event.stopPropagation();
-        const group = (event.target as HTMLElement).closest<HTMLElement>('[data-linked-pair]');
+        const group = (event.target as HTMLElement).closest<HTMLElement>('[data-linked-group]');
         if (!group) return;
         const slugs = Array.from(group.querySelectorAll<HTMLElement>('.featured-item')).map(card => this.showSlug(card));
-        this.savePairs(this.savedPairs().filter(pair => !pair.every(slug => slugs.includes(slug))));
-        this.renderLinkedPairs();
+        this.saveGroups(this.savedGroups().filter(saved => !saved.every(slug => slugs.includes(slug))));
+        this.renderLinkedGroups();
         this.applyFavouriteSort();
+        this.updateLinkControls();
     }
 
     private updateLinkControls() {
         this.linkButtonTarget.textContent = this.linking ? "Cancel linking" : "Link shows";
+        this.linkFinishTarget.classList.toggle('hidden', !this.linking);
+        this.linkFinishTarget.disabled = this.selectedSlugs.length < 2;
         this.linkStatusTarget.textContent = this.linking
-            ? `Select two unlinked shows (${this.selectedSlugs.length}/2)`
+            ? `Select 2 or more shows (${this.selectedSlugs.length} selected), then click Create group.`
             : "";
         this.gridTarget.querySelectorAll<HTMLElement>('.featured-item').forEach(card => {
             const selected = this.selectedSlugs.includes(this.showSlug(card));
@@ -285,14 +289,14 @@ export default class extends Controller {
     private sortableItems(): HTMLElement[] {
         return Array.from(this.gridTarget.children).filter((element): element is HTMLElement =>
             element instanceof HTMLElement &&
-            (element.matches('.featured-item') || element.hasAttribute('data-linked-pair'))
+            (element.matches('.featured-item') || element.hasAttribute('data-linked-group'))
         );
     }
 
     shuffleFavourites() {
         const shows = this.sortableItems();
 
-        // Shuffle linked pairs as units, keeping both posters together.
+        // Shuffle linked groups as units, keeping all their posters together.
         for (let i = shows.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [shows[i], shows[j]] = [shows[j], shows[i]];
