@@ -149,8 +149,9 @@
     grid-template-columns: repeat(var(--columns), minmax(0, 1fr));
     grid-column: span var(--columns);
     gap: 0.75rem;
-    padding: 2.5rem 0.75rem 0.75rem;
-    border: 2px solid #a855f7;
+    padding: 0;
+    border: none;
+    outline: 2px solid var(--group-colour, #18b182);
     border-radius: 0.75rem;
     min-width: 0;
 }
@@ -161,11 +162,14 @@
 
 .linked-show-group .unlink-group-button {
     position: absolute;
-    top: 0.5rem;
-    right: 0.5rem;
+    bottom: 0;
+    transform: translateY(50%);
+    background: #c94f4f;
+    color: #ffffff;
+    left: 0.5rem;
     z-index: 10;
     padding: 0.2rem 0.6rem;
-    border: 1px solid currentColor;
+    border: 2px solid var(--group-colour, #18b182);
     border-radius: 0.4rem;
     font-size: 0.75rem;
     cursor: pointer;
@@ -184,9 +188,86 @@
 }
 /* Center the last poster in odd-sized groups on mobile */
 @media (max-width: 767px) {
-    .linked-show-group > .featured-item:nth-child(odd):nth-last-child(2) {
+    .linked-show-group > .featured-item:nth-child(odd):last-of-type {
         grid-column: 1 / -1;
         width: calc((100% - 0.75rem) / 2);
         justify-self: center;
     }
+}
+/* Selected concerts during group creation */
+.featured-item.selected-for-group {
+    position: relative;
+    outline: 3px solid #18b182;
+    outline-offset: -3px;
+    background-color: rgba(24, 177, 130, 0.12);
+}
+
+.featured-item.selected-for-group::after {
+    content: "✓";
+    position: absolute;
+    top: 1rem;
+    left: 0.75rem;
+    width: 1.75rem;
+    height: 1.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #18b182;
+    color: #ffffff;
+    border: 2px solid white;
+    border-radius: 50%;
+    font-size: 1rem;
+    font-weight: bold;
+    z-index: 5;
+    pointer-events: none;
+}
+/* Reveal the unlink button on group hover */
+@media (hover: hover) and (pointer: fine) {
+    .linked-show-group .unlink-group-button {
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 150ms ease;
+    }
+
+    .linked-show-group:hover .unlink-group-button,
+    .linked-show-group:focus-within .unlink-group-button {
+        opacity: 1;
+        pointer-events: auto;
+    }
+}
+/* Edit existing linked groups */
+.linked-show-group .edit-group-button {
+    position: absolute;
+    top: 0;
+    right: 0.5rem;
+    transform: translateY(-50%);
+    z-index: 10;
+    padding: 0.2rem 0.6rem;
+    background: #18b182;
+    color: #ffffff;
+    border: 2px solid var(--group-colour, #18b182);
+    border-radius: 0.4rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+
+/* Reveal the edit button on hover */
+@media (hover: hover) and (pointer: fine) {
+    .linked-show-group .edit-group-button {
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 150ms ease;
+    }
+
+    .linked-show-group:hover .edit-group-button,
+    .linked-show-group:focus-within .edit-group-button {
+        opacity: 1;
+        pointer-events: auto;
+    }
+}
+
+/* Hide group actions during selection */
+.group-selection-active .edit-group-button,
+.group-selection-active .unlink-group-button {
+    display: none;
 }

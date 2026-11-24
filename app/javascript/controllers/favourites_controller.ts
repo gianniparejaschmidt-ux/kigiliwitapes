@@ -5,6 +5,19 @@ import PlayerController from "./player_controller";
 
 const GROUPS_STORAGE_KEY = "gizz-tapes:favourite-pairs"; // Keep existing saved pairs compatible.
 const SORT_STORAGE_KEY = "gizz-tapes:favourites-sort";
+const GROUP_COLOURS = [
+    "#18b182", // Green
+    "#a855f7", // Purple
+    "#3b82f6", // Blue
+    "#e59b32", // Amber
+    "#e05252", // Red
+    "#06b6d4", // Cyan
+    "#ec4899", // Pink
+    "#84cc16", // Lime
+    "#f97316", // Orange
+];
+const GROUP_COLOURS_STORAGE_KEY = "gizz-tapes:favourite-group-colours";
+const GROUP_COLOUR_INDEX_STORAGE_KEY = "gizz-tapes:favourite-group-colour-index";
 const DEFAULT_SORT = "date-desc";
 const SORT_OPTIONS = ["date-desc", "date-asc", "venue-asc", "city-asc"];
 
@@ -26,6 +39,7 @@ export default class extends Controller {
 
     private linking = false;
     private selectedSlugs: string[] = [];
+    private editingGroup: string[] | null = null;
 
     connect() {
         if (this.hasSortSelectTarget) {
@@ -120,9 +134,30 @@ export default class extends Controller {
 
         const favouritesSlugs = await this.getFavouritesSlugs();
         const favouriteSet = new Set(favouritesSlugs);
-        const validGroups = this.savedGroups()
-            .map(group => group.filter(slug => favouriteSet.has(slug)))
-            .filter(group => group.length >= 2);
+        const originalGroups = this.savedGroups();
+        const validGroups: string[][] = [];
+
+        const colours = this.savedGroupColours();
+        for (const group of originalGroups) {
+            const remaining = group.filter(slug => favouriteSet.has(slug));
+            const originalKey = this.groupColourKey(group);
+            const colour = colours[originalKey];
+
+            delete colours[originalKey];
+
+            if (remaining.length >= 2) {
+                validGroups.push(remaining);
+
+                if (GROUP_COLOURS.includes(colour)) {
+                    colours[this.groupColourKey(remaining)] = colour;
+                }
+            }
+        }
+
+        localStorage.setItem(
+            GROUP_COLOURS_STORAGE_KEY,
+            JSON.stringify(colours)
+        );
 
         this.saveGroups(validGroups);
 
@@ -200,6 +235,59 @@ export default class extends Controller {
     private saveGroups(groups: string[][]) {
         localStorage.setItem(GROUPS_STORAGE_KEY, JSON.stringify(groups));
     }
+    private savedGroupColours(): Record<string, string> {
+        try {
+            const stored = JSON.parse(
+                localStorage.getItem(GROUP_COLOURS_STORAGE_KEY) || "{}"
+            );
+
+            if (!stored || typeof stored !== "object" || Array.isArray(stored))
+                return {};
+
+            return Object.fromEntries(
+                Object.entries(stored).filter(
+                    ([, colour]) =>
+                        typeof colour === "string" &&
+                        GROUP_COLOURS.includes(colour)
+                )
+            ) as Record<string, string>;
+        } catch {
+            return {};
+        }
+    }
+    private groupColourKey(slugs: string[]): string {
+        return JSON.stringify([...slugs].sort());
+    }
+
+    private groupColour(slugs: string[]): string {
+        const colours = this.savedGroupColours();
+
+        const key = this.groupColourKey(slugs);
+
+        if (!GROUP_COLOURS.includes(colours[key])) {
+            const storedIndex = Number(
+                localStorage.getItem(GROUP_COLOUR_INDEX_STORAGE_KEY) || "0"
+            );
+
+            const index = Number.isSafeInteger(storedIndex) && storedIndex >= 0
+                ? storedIndex % GROUP_COLOURS.length
+                : 0;
+
+            colours[key] = GROUP_COLOURS[index % GROUP_COLOURS.length];
+
+            localStorage.setItem(
+                GROUP_COLOURS_STORAGE_KEY,
+                JSON.stringify(colours)
+            );
+
+            localStorage.setItem(
+                GROUP_COLOUR_INDEX_STORAGE_KEY,
+                String(index + 1)
+            );
+        }
+
+        return colours[key];
+    }
 
     private renderLinkedGroups() {
         this.gridTarget.querySelectorAll<HTMLElement>('[data-linked-group]').forEach(group => {
@@ -212,11 +300,16 @@ export default class extends Controller {
         const groups = this.savedGroups().filter(group => group.every(slug => bySlug.has(slug)));
 
         for (const slugs of groups) {
-            const shows = slugs.map(slug => bySlug.get(slug)!);
+            const shows = slugs
+                .map(slug => bySlug.get(slug)!)
+                .sort((a, b) =>
+                    (a.dataset.sortDate || "").localeCompare(b.dataset.sortDate || "")
+                );
             const group = document.createElement('div');
             group.dataset.linkedGroup = "true";
 
             group.className = "linked-show-group";
+            group.style.setProperty("--group-colour", this.groupColour(slugs));
             group.style.setProperty("--group-size", String(shows.length));
 
             group.dataset.sortDate = shows.map(show => show.dataset.sortDate || "").sort().reverse()[0];
@@ -226,11 +319,18 @@ export default class extends Controller {
             const unlink = document.createElement('button');
             unlink.type = "button";
             unlink.className = "unlink-group-button";
-            unlink.textContent = "Unlink group";
+            unlink.textContent = "Split";
             unlink.setAttribute('aria-label', 'Unlink these shows');
             unlink.dataset.action = "click->favourites#unlinkShows";
 
-            group.append(...shows, unlink);
+            const edit = document.createElement('button');
+            edit.type = "button";
+            edit.className = "edit-group-button";
+            edit.textContent = "Change";
+            edit.setAttribute('aria-label', 'Edit this group');
+            edit.dataset.action = "click->favourites#editGroup";
+
+            group.append(...shows, edit, unlink);
             this.gridTarget.appendChild(group);
         }
     }
@@ -238,20 +338,32 @@ export default class extends Controller {
     toggleLinkMode() {
         this.linking = !this.linking;
         this.selectedSlugs = [];
+        this.editingGroup = null;
         this.updateLinkControls();
     }
 
     selectShow(event: MouseEvent) {
         if (!this.linking) return;
+
         const card = (event.target as HTMLElement).closest<HTMLElement>('.featured-item');
         if (!card || !this.gridTarget.contains(card)) return;
+
         event.preventDefault();
         event.stopPropagation();
 
         const slug = this.showSlug(card);
         if (!slug) return;
-        if (this.savedGroups().some(group => group.includes(slug))) {
-            this.linkStatusTarget.textContent = "This show is already linked. Unlink its group first.";
+
+        const belongsToGroup = this.savedGroups().some(
+            group => group.includes(slug)
+        );
+
+        const belongsToEditedGroup =
+            this.editingGroup?.includes(slug) ?? false;
+
+        if (belongsToGroup && !belongsToEditedGroup) {
+            this.linkStatusTarget.textContent =
+                "This show belongs to another group.";
             return;
         }
 
@@ -265,20 +377,72 @@ export default class extends Controller {
 
     finishLinking() {
         if (this.selectedSlugs.length < 2) return;
-        this.saveGroups([...this.savedGroups(), [...this.selectedSlugs]]);
+
+        let groups = this.savedGroups();
+
+        if (this.editingGroup) {
+            const originalGroup = this.editingGroup;
+            const colour = this.groupColour(originalGroup);
+            const colours = this.savedGroupColours();
+            delete colours[this.groupColourKey(originalGroup)];
+            colours[this.groupColourKey(this.selectedSlugs)] = colour;
+
+            localStorage.setItem(
+                GROUP_COLOURS_STORAGE_KEY,
+                JSON.stringify(colours)
+            );
+
+            groups = groups.filter(group =>
+                !group.some(slug => originalGroup.includes(slug))
+            );
+        }
+
+        this.saveGroups([...groups, [...this.selectedSlugs]]);
+
         this.selectedSlugs = [];
+        this.editingGroup = null;
         this.linking = false;
+
         this.renderLinkedGroups();
         this.applyFavouriteSort();
         this.updateLinkControls();
     }
 
+    editGroup(event: MouseEvent) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const group = (event.target as HTMLElement)
+            .closest<HTMLElement>('[data-linked-group]');
+
+        if (!group || this.linking) return;
+
+        const slugs = Array.from(
+            group.querySelectorAll<HTMLElement>('.featured-item')
+        ).map(card => this.showSlug(card));
+
+        this.editingGroup = [...slugs];
+        this.selectedSlugs = [...slugs];
+        this.linking = true;
+
+        this.updateLinkControls();
+    }
     unlinkShows(event: MouseEvent) {
         event.preventDefault();
         event.stopPropagation();
+
+        if (this.linking) return;
         const group = (event.target as HTMLElement).closest<HTMLElement>('[data-linked-group]');
         if (!group) return;
         const slugs = Array.from(group.querySelectorAll<HTMLElement>('.featured-item')).map(card => this.showSlug(card));
+        const colours = this.savedGroupColours();
+
+        delete colours[this.groupColourKey(slugs)];
+
+        localStorage.setItem(
+            GROUP_COLOURS_STORAGE_KEY,
+            JSON.stringify(colours)
+        );
         this.saveGroups(this.savedGroups().filter(saved => !saved.every(slug => slugs.includes(slug))));
         this.renderLinkedGroups();
         this.applyFavouriteSort();
@@ -286,16 +450,27 @@ export default class extends Controller {
     }
 
     private updateLinkControls() {
-        this.linkButtonTarget.textContent = this.linking ? "Cancel linking" : "Link shows";
+        this.linkButtonTarget.textContent = this.linking
+            ? "Cancel"
+            : "Fuse shows";
+
+        this.linkFinishTarget.textContent = this.editingGroup
+            ? "Save"
+            : "Fuse";
+
         this.linkFinishTarget.classList.toggle('hidden', !this.linking);
         this.linkFinishTarget.disabled = this.selectedSlugs.length < 2;
+        this.gridTarget.classList.toggle('group-selection-active', this.linking);
+
         this.linkStatusTarget.textContent = this.linking
-            ? `Select 2 or more shows (${this.selectedSlugs.length} selected), then click Create group.`
+            ? this.editingGroup
+                ? `Click shows to add or remove them (${this.selectedSlugs.length} selected), then click Save.`
+                : `Select 2 or more shows (${this.selectedSlugs.length} selected), then click Fuse.`
             : "";
+
         this.gridTarget.querySelectorAll<HTMLElement>('.featured-item').forEach(card => {
             const selected = this.selectedSlugs.includes(this.showSlug(card));
-            card.classList.toggle('ring-4', selected);
-            card.classList.toggle('ring-primary', selected);
+            card.classList.toggle('selected-for-group', selected);
             card.classList.toggle('cursor-crosshair', this.linking);
         });
     }
