@@ -271,3 +271,41 @@
 .group-selection-active .unlink-group-button {
     display: none;
 }
+/* Keep poster focus indicators inside fused groups */
+.linked-show-group .featured-item:focus-visible:not(.selected-for-group) {
+    outline: 2px solid #18b182;
+    outline-offset: -5px;
+}
+/* Floating fusion selection controls */
+.fusion-floating-controls:not(.hidden) {
+    position: fixed;
+    bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 25;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+
+    width: max-content;
+    max-width: calc(100vw - 24px);
+    padding: 10px 14px;
+
+    background: var(--fallback-b1, oklch(var(--b1)));
+    border: 2px solid #18b182;
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.fusion-floating-controls .fusion-confirm-button {
+    background-color: #18b182;
+    border-color: #18b182;
+    color: #10251e;
+}
+
+.fusion-floating-controls .fusion-confirm-button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}

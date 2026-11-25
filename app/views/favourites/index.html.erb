@@ -4,7 +4,8 @@
 
 <% content_for :meta_title, "Favourites on Gizz Tapes" %>
 
-<div class="container mx-auto mt-8 px-5">
+<div class="container mx-auto mt-8 px-5"
+     data-action="keydown@window->favourites#handleFusionKey">
     <h2 class="text-3xl font-bold mb-8 text-center text-black dark:text-white">
         Favourite Shows
     </h2>
@@ -20,10 +21,13 @@
                         class="select select-bordered select-sm"
                         aria-label="Sort favourite shows"
                     >
-                        <option value="date-desc">Date: newest first</option>
-                        <option value="date-asc">Date: oldest first</option>
-                        <option value="venue-asc">Venue: A–Z</option>
-                        <option value="city-asc">City: A–Z</option>
+                        <option value="date-desc">Newest show</option>
+                        <option value="date-asc">Oldest show</option>
+                        <option value="favourite-desc">Recently favourited</option>
+                        <option value="favourite-asc">Earliest favourited</option>
+                        <option value="city-asc">City A–Z</option>
+                        <option value="venue-asc">Venue A–Z</option>
+                        <option value="fusion">Intertwined</option>
                     </select>
                 </label>
 
@@ -48,6 +52,7 @@
 
                 <button
                     type="button"
+                    data-favourites-target="shuffleButton"
                     data-action="click->favourites#shuffleFavourites"
                     class="btn btn-outline btn-sm"
                 >
@@ -55,14 +60,37 @@
                 </button>
             </div>
 
+            <div data-favourites-target="floatingControls"
+                 class="fusion-floating-controls hidden">
+
+                <span data-favourites-target="floatingCount"
+                  class="text-sm font-medium">
+                0 selected
+            </span>
+
+                <button type="button"
+                        data-favourites-target="floatingFinish"
+                        data-action="click->favourites#finishLinking"
+                        class="btn btn-sm fusion-confirm-button"
+                        disabled>
+                    Fuse
+                </button>
+
+                <button type="button"
+                        data-action="click->favourites#toggleLinkMode"
+                        class="btn btn-outline btn-sm">
+                    Cancel
+                </button>
+
+            </div>
             <p data-favourites-target="linkStatus" class="text-sm px-2 mb-2" role="status" aria-live="polite"></p>
 
             <div data-action="click->favourites#selectShow" busy data-favourites-target="grid" id="favourites-grid" class="responsive-grid">
-           
+
             </div>
 
             <div
-                class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-gray-100 bg-opacity-25 dark:bg-gray-900 dark:bg-opacity-25 opacity-0 [[busy]~&]:opacity-100 backdrop-blur transition-opacity"
+                class="pointer-events-none absolute inset-0 z-10 hidden [[busy]~&]:flex items-center justify-center bg-gray-100 bg-opacity-25 dark:bg-gray-900 dark:bg-opacity-25 backdrop-blur"
             >
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5"
                     stroke="currentColor" class="size-6 animate-spin">

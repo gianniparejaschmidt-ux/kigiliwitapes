@@ -19,10 +19,18 @@ const GROUP_COLOURS = [
 const GROUP_COLOURS_STORAGE_KEY = "gizz-tapes:favourite-group-colours";
 const GROUP_COLOUR_INDEX_STORAGE_KEY = "gizz-tapes:favourite-group-colour-index";
 const DEFAULT_SORT = "date-desc";
-const SORT_OPTIONS = ["date-desc", "date-asc", "venue-asc", "city-asc"];
+const SORT_OPTIONS = [
+    "date-desc",
+    "date-asc",
+    "favourite-desc",
+    "favourite-asc",
+    "city-asc",
+    "venue-asc",
+    "fusion"
+];
 
 export default class extends Controller {
-    static targets = ['grid', 'showFavouriteButton', 'featuredShow', 'sortSelect', 'linkButton', 'linkStatus', 'linkFinish'];
+    static targets = ['grid', 'showFavouriteButton', 'featuredShow', 'sortSelect', 'linkButton', 'linkStatus', 'linkFinish', 'shuffleButton', "floatingControls", "floatingCount", "floatingFinish",];
 
     declare readonly gridTarget: HTMLElement;
     declare readonly hasGridTarget: boolean;
@@ -36,7 +44,14 @@ export default class extends Controller {
     declare readonly linkButtonTarget: HTMLButtonElement;
     declare readonly linkStatusTarget: HTMLElement;
     declare readonly linkFinishTarget: HTMLButtonElement;
+    declare readonly shuffleButtonTarget: HTMLButtonElement;
+    declare readonly floatingControlsTarget: HTMLElement;
+    declare readonly hasFloatingControlsTarget: boolean;
+    declare readonly floatingCountTarget: HTMLElement;
+    declare readonly floatingFinishTarget: HTMLButtonElement;
+    declare readonly hasShuffleButtonTarget: boolean;
 
+    private favouriteOrder = new Map<string, number>();
     private linking = false;
     private selectedSlugs: string[] = [];
     private editingGroup: string[] | null = null;
@@ -47,8 +62,11 @@ export default class extends Controller {
             this.sortSelectTarget.value = savedSort !== null && SORT_OPTIONS.includes(savedSort) ? savedSort : DEFAULT_SORT;
         }
 
-        if (this.hasGridTarget)
+        if (this.hasGridTarget) {
+            this.enhanceSortSelect();
+            this.updateLinkControls();
             this.renderFavourites();
+        }
 
         if (this.hasShowFavouriteButtonTarget)
             this.updateShowFavoriteButton(this.showFavouriteButtonTarget);
@@ -132,44 +150,43 @@ export default class extends Controller {
         this.gridTarget.setAttribute('busy', '');
         this.gridTarget.innerHTML = '';
 
-        const favouritesSlugs = await this.getFavouritesSlugs();
-        const favouriteSet = new Set(favouritesSlugs);
-        const originalGroups = this.savedGroups();
-        const validGroups: string[][] = [];
+        try {
+            const favouritesSlugs = await this.getFavouritesSlugs();
+            const favouriteSet = new Set(favouritesSlugs);
+            const originalGroups = this.savedGroups();
+            const validGroups: string[][] = [];
 
-        const colours = this.savedGroupColours();
-        for (const group of originalGroups) {
-            const remaining = group.filter(slug => favouriteSet.has(slug));
-            const originalKey = this.groupColourKey(group);
-            const colour = colours[originalKey];
+            const colours = this.savedGroupColours();
+            for (const group of originalGroups) {
+                const remaining = group.filter(slug => favouriteSet.has(slug));
+                const originalKey = this.groupColourKey(group);
+                const colour = colours[originalKey];
 
-            delete colours[originalKey];
+                delete colours[originalKey];
 
-            if (remaining.length >= 2) {
-                validGroups.push(remaining);
+                if (remaining.length >= 2) {
+                    validGroups.push(remaining);
 
-                if (GROUP_COLOURS.includes(colour)) {
-                    colours[this.groupColourKey(remaining)] = colour;
+                    if (GROUP_COLOURS.includes(colour)) {
+                        colours[this.groupColourKey(remaining)] = colour;
+                    }
                 }
             }
-        }
 
-        localStorage.setItem(
-            GROUP_COLOURS_STORAGE_KEY,
-            JSON.stringify(colours)
-        );
+            localStorage.setItem(
+                GROUP_COLOURS_STORAGE_KEY,
+                JSON.stringify(colours)
+            );
 
-        this.saveGroups(validGroups);
+            this.saveGroups(validGroups);
 
-        if (favouritesSlugs.length === 0) {
-            this.gridTarget.innerHTML = `<p class="mb-5">No favourites yet!</p>`;
-            this.gridTarget.classList.remove('responsive-grid');
-            this.gridTarget.removeAttribute('busy');
+            if (favouritesSlugs.length === 0) {
+                this.gridTarget.innerHTML = `<p class="mb-5">No favourites yet!</p>`;
+                this.gridTarget.classList.remove('responsive-grid');
 
-            return;
-        }
+                return;
+            }
 
-        try {
             // Fetch every show first, then render in list order. Rendering each response
             // as it arrives makes the card order depend on network timing.
             const responses = await Promise.all(favouritesSlugs.map(async (slug) => {
@@ -191,24 +208,40 @@ export default class extends Controller {
 
             // Allow Turbo to finish inserting the concert cards
             // before sorting and grouping them.
-            requestAnimationFrame(() => {
-                this.renderLinkedGroups();
-                this.applyFavouriteSort();
+            await new Promise<void>(resolve => {
+                requestAnimationFrame(() => resolve());
             });
+
+            this.renderLinkedGroups();
+            this.applyFavouriteSort();
+            this.updateLinkControls();
 
         }
         catch (error) {
             this.gridTarget.innerHTML = `<p class="mb-5">Failed to load favourites.</p>`;
             this.gridTarget.classList.remove('responsive-grid');
+        } finally {
+            this.gridTarget.removeAttribute('busy');
         }
-
-        this.gridTarget.removeAttribute('busy');
     }
 
     sortFavourites() {
         const sort = this.sortSelectTarget.value;
-        localStorage.setItem(SORT_STORAGE_KEY, SORT_OPTIONS.includes(sort) ? sort : DEFAULT_SORT);
+
+        localStorage.setItem(
+            SORT_STORAGE_KEY,
+            SORT_OPTIONS.includes(sort) ? sort : DEFAULT_SORT
+        );
+
+        if (this.gridTarget.hasAttribute("busy")) return;
+
+        this.linking = false;
+        this.selectedSlugs = [];
+        this.editingGroup = null;
+
+        this.renderLinkedGroups();
         this.applyFavouriteSort();
+        this.updateLinkControls();
     }
 
     private showSlug(show: HTMLElement): string {
@@ -289,11 +322,154 @@ export default class extends Controller {
         return colours[key];
     }
 
-    private renderLinkedGroups() {
+    private unwrapLinkedGroups() {
         this.gridTarget.querySelectorAll<HTMLElement>('[data-linked-group]').forEach(group => {
             const cards = Array.from(group.querySelectorAll<HTMLElement>('.featured-item'));
             group.replaceWith(...cards);
         });
+    }
+
+    private installSortSelectStyles() {
+        if (document.getElementById("favourites-sort-styles")) return;
+
+        const style = document.createElement("style");
+        style.id = "favourites-sort-styles";
+
+        style.textContent = `
+        .enhanced-sort-select,
+        .enhanced-sort-select::picker(select) {
+            appearance: base-select;
+        }
+
+        .enhanced-sort-select {
+            display: inline-flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .enhanced-sort-select::picker-icon {
+            display: none;
+        }
+
+        .enhanced-sort-select > button {
+            display: flex;
+            align-items: center;
+            flex: 1;
+        }
+
+        .enhanced-sort-select option,
+        .enhanced-sort-select selectedcontent {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .enhanced-sort-select .favourite-icon {
+            width: 18px;
+            height: 18px;
+            flex-shrink: 0;
+        }
+    `;
+
+        document.head.appendChild(style);
+    }
+    private enhanceSortSelect() {
+        if (!this.hasSortSelectTarget) return;
+
+        if (
+            !CSS.supports("appearance", "base-select") ||
+            !CSS.supports("selector(::picker(select))")
+        ) return;
+
+        const select = this.sortSelectTarget;
+
+        if (select.classList.contains("enhanced-sort-select")) return;
+
+        const savedValue = select.value;
+        const computed = window.getComputedStyle(select);
+
+        const originalStyles = [
+            "background-image",
+            "background-size",
+            "background-position",
+            "background-repeat",
+            "padding-right",
+            "padding-left"
+        ].map(property => ({
+            property,
+            value: computed.getPropertyValue(property)
+        }));
+
+        this.installSortSelectStyles();
+
+        const button = document.createElement("button");
+        button.type = "button";
+
+        const selectedContent = document.createElement("selectedcontent");
+        button.appendChild(selectedContent);
+        select.prepend(button);
+
+        const labels = [
+            ["favourite-desc", "Newest", "Recently favourited"],
+            ["favourite-asc", "Oldest", "Earliest favourited"]
+        ];
+
+        for (const [value, label, description] of labels) {
+            const option = select.querySelector<HTMLOptionElement>(
+                `option[value="${value}"]`
+            );
+
+            if (!option) continue;
+
+            option.replaceChildren(
+                document.createTextNode(label),
+                this.createSortHeart()
+            );
+
+            option.setAttribute("aria-label", description);
+            option.title = description;
+        }
+
+        select.classList.add("enhanced-sort-select");
+        for (const { property, value } of originalStyles) {
+            select.style.setProperty(property, value, "important");
+        }
+
+        select.value = "date-desc";
+        select.value = savedValue;
+    }
+    private createSortHeart(): SVGSVGElement {
+        const ns = "http://www.w3.org/2000/svg";
+        const svg = document.createElementNS(ns, "svg");
+
+        svg.setAttribute("viewBox", "0 0 24 24");
+        svg.setAttribute("width", "18");
+        svg.setAttribute("height", "18");
+        svg.setAttribute("fill", "none");
+        svg.setAttribute("stroke", "currentColor");
+        svg.setAttribute("stroke-width", "1.5");
+        svg.setAttribute("class", "favourite-icon active");
+        svg.setAttribute("aria-hidden", "true");
+
+        const path = document.createElementNS(ns, "path");
+
+        path.setAttribute("stroke-linecap", "round");
+        path.setAttribute("stroke-linejoin", "round");
+        path.setAttribute("d", "M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z");
+
+        svg.appendChild(path);
+        return svg;
+    }
+    private isIntertwined(): boolean {
+        return this.hasSortSelectTarget &&
+            this.sortSelectTarget.value === "fusion";
+    }
+
+    private renderLinkedGroups() {
+        this.unwrapLinkedGroups();
+
+        if (!this.isIntertwined()) return;
 
         const cards = Array.from(this.gridTarget.querySelectorAll<HTMLElement>('.featured-item'));
         const bySlug = new Map(cards.map(card => [this.showSlug(card), card]));
@@ -334,12 +510,95 @@ export default class extends Controller {
             this.gridTarget.appendChild(group);
         }
     }
+    handleFusionKey(event: KeyboardEvent) {
+        if (!this.hasGridTarget || !this.isIntertwined()) return;
+        if (this.gridTarget.hasAttribute("busy")) return;
+
+        if (
+            event.defaultPrevented ||
+            event.repeat ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.altKey ||
+            event.shiftKey
+        ) return;
+
+        const target = event.target;
+        if (
+            event.key.toLowerCase() === "f" &&
+            !this.linking &&
+            target instanceof Element &&
+            target.closest("select") === this.sortSelectTarget
+        ) {
+            event.preventDefault();
+            this.linkButtonTarget.focus();
+            this.toggleLinkMode();
+            return;
+        }
+
+        if (
+            target instanceof Element &&
+            target.closest("input, textarea, select, [contenteditable]")
+        ) return;
+
+        if (event.key.toLowerCase() === "f" && !this.linking) {
+            if (
+                !(target instanceof Element) ||
+                (
+                    !this.gridTarget.contains(target) &&
+                    !this.linkButtonTarget.contains(target) &&
+                    target !== document.body
+                )
+            ) return;
+
+            event.preventDefault();
+            this.toggleLinkMode();
+            return;
+        }
+
+        if (!this.linking) return;
+
+        if (event.key === "Escape") {
+            event.preventDefault();
+            this.toggleLinkMode();
+            return;
+        }
+
+        if (event.key === "Enter") {
+            if (
+                target instanceof Element &&
+                target.closest("a, button, [role='button']") &&
+                !target.closest("#favourites-grid .featured-item")
+            ) return;
+
+            event.preventDefault();
+
+            if (this.selectedSlugs.length >= 2) {
+                this.finishLinking();
+            }
+        }
+    }
 
     toggleLinkMode() {
+        if (!this.hasGridTarget || !this.isIntertwined()) return;
+        if (this.gridTarget.hasAttribute("busy")) return;
+
+        const restoreFocus = this.linking && (
+            document.activeElement === this.linkFinishTarget ||
+            (
+                this.hasFloatingControlsTarget &&
+                this.floatingControlsTarget.contains(document.activeElement)
+            )
+        );
+
         this.linking = !this.linking;
         this.selectedSlugs = [];
         this.editingGroup = null;
         this.updateLinkControls();
+
+        if (restoreFocus) {
+            this.linkButtonTarget.focus({ preventScroll: true });
+        }
     }
 
     selectShow(event: MouseEvent) {
@@ -376,7 +635,17 @@ export default class extends Controller {
     }
 
     finishLinking() {
+        if (!this.hasGridTarget || !this.isIntertwined()) return;
+        if (this.gridTarget.hasAttribute("busy") || !this.linking) return;
         if (this.selectedSlugs.length < 2) return;
+
+        const restoreFocus =
+            document.activeElement === this.linkFinishTarget ||
+            this.gridTarget.contains(document.activeElement) ||
+            (
+                this.hasFloatingControlsTarget &&
+                this.floatingControlsTarget.contains(document.activeElement)
+            );
 
         let groups = this.savedGroups();
 
@@ -384,6 +653,7 @@ export default class extends Controller {
             const originalGroup = this.editingGroup;
             const colour = this.groupColour(originalGroup);
             const colours = this.savedGroupColours();
+
             delete colours[this.groupColourKey(originalGroup)];
             colours[this.groupColourKey(this.selectedSlugs)] = colour;
 
@@ -392,12 +662,16 @@ export default class extends Controller {
                 JSON.stringify(colours)
             );
 
-            groups = groups.filter(group =>
-                !group.some(slug => originalGroup.includes(slug))
+            groups = groups.map(group =>
+                group.some(slug => originalGroup.includes(slug))
+                    ? [...this.selectedSlugs]
+                    : group
             );
+        } else {
+            groups.push([...this.selectedSlugs]);
         }
 
-        this.saveGroups([...groups, [...this.selectedSlugs]]);
+        this.saveGroups(groups);
 
         this.selectedSlugs = [];
         this.editingGroup = null;
@@ -406,6 +680,10 @@ export default class extends Controller {
         this.renderLinkedGroups();
         this.applyFavouriteSort();
         this.updateLinkControls();
+
+        if (restoreFocus) {
+            this.linkButtonTarget.focus({ preventScroll: true });
+        }
     }
 
     editGroup(event: MouseEvent) {
@@ -450,6 +728,16 @@ export default class extends Controller {
     }
 
     private updateLinkControls() {
+        this.linkButtonTarget.classList.toggle(
+            'hidden', !this.isIntertwined()
+        );
+
+        if (this.hasShuffleButtonTarget) {
+            this.shuffleButtonTarget.classList.toggle(
+                'hidden', this.isIntertwined()
+            );
+        }
+
         this.linkButtonTarget.textContent = this.linking
             ? "Cancel"
             : "Fuse shows";
@@ -460,6 +748,22 @@ export default class extends Controller {
 
         this.linkFinishTarget.classList.toggle('hidden', !this.linking);
         this.linkFinishTarget.disabled = this.selectedSlugs.length < 2;
+        if (this.hasFloatingControlsTarget) {
+            this.floatingControlsTarget.classList.toggle(
+                "hidden",
+                !this.linking || !this.isIntertwined()
+            );
+
+            this.floatingCountTarget.textContent =
+                `${this.selectedSlugs.length} selected`;
+
+            this.floatingFinishTarget.textContent =
+                this.editingGroup ? "Save" : "Fuse";
+
+            this.floatingFinishTarget.disabled =
+                this.selectedSlugs.length < 2;
+        }
+
         this.gridTarget.classList.toggle('group-selection-active', this.linking);
 
         this.linkStatusTarget.textContent = this.linking
@@ -470,11 +774,11 @@ export default class extends Controller {
 
         this.gridTarget.querySelectorAll<HTMLElement>('.featured-item').forEach(card => {
             const selected = this.selectedSlugs.includes(this.showSlug(card));
+
             card.classList.toggle('selected-for-group', selected);
             card.classList.toggle('cursor-crosshair', this.linking);
         });
     }
-
     private sortableItems(): HTMLElement[] {
         return Array.from(this.gridTarget.children).filter((element): element is HTMLElement =>
             element instanceof HTMLElement &&
@@ -483,9 +787,11 @@ export default class extends Controller {
     }
 
     shuffleFavourites() {
+        if (!this.hasGridTarget || this.isIntertwined()) return;
+        if (this.gridTarget.hasAttribute("busy")) return;
         const shows = this.sortableItems();
 
-        // Shuffle linked groups as units, keeping all their posters together.
+        // Shuffle individual favourite shows using Fisher-Yates.
         for (let i = shows.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [shows[i], shows[j]] = [shows[j], shows[i]];
@@ -497,12 +803,60 @@ export default class extends Controller {
     applyFavouriteSort() {
         const sort = this.hasSortSelectTarget ? this.sortSelectTarget.value : DEFAULT_SORT;
         const shows = this.sortableItems();
+        const originalOrder = [...shows];
+
+        if (this.isIntertwined()) {
+            const groups = shows.filter(show =>
+                show.hasAttribute("data-linked-group")
+            );
+
+            const unfused = shows.filter(show =>
+                !show.hasAttribute("data-linked-group")
+            );
+
+            unfused.sort((a, b) =>
+                (b.dataset.sortDate || "").localeCompare(
+                    a.dataset.sortDate || ""
+                )
+            );
+
+            const ordered = [...groups, ...unfused];
+
+            if (ordered.some((show, index) => show !== shows[index])) {
+                ordered.forEach(show => this.gridTarget.appendChild(show));
+            }
+
+            return;
+        }
         const collator = new Intl.Collator(undefined, { sensitivity: "base", numeric: true });
 
         const valueFor = (show: HTMLElement, key: string) => show.dataset[key] || "";
+        const favouriteIds = new Map<HTMLElement, number | undefined>();
+
+        if (sort === "favourite-desc" || sort === "favourite-asc") {
+            shows.forEach(show => {
+                favouriteIds.set(show, this.favouriteOrder.get(this.showSlug(show)));
+            });
+        }
 
         shows.sort((a, b) => {
             switch (sort) {
+                case "favourite-desc":
+                case "favourite-asc": {
+                    const aId = favouriteIds.get(a);
+                    const bId = favouriteIds.get(b);
+
+                    if (aId === undefined && bId === undefined)
+                        return valueFor(b, "sortDate").localeCompare(valueFor(a, "sortDate"));
+
+                    if (aId === undefined) return 1;
+                    if (bId === undefined) return -1;
+
+                    return sort === "favourite-desc"
+                        ? bId - aId
+                        : aId - bId;
+                }
+
                 case "date-asc":
                     return valueFor(a, "sortDate").localeCompare(valueFor(b, "sortDate"));
                 case "venue-asc":
@@ -515,11 +869,19 @@ export default class extends Controller {
             }
         });
 
-        shows.forEach(show => this.gridTarget.appendChild(show));
+        if (shows.some((show, index) => show !== originalOrder[index])) {
+            shows.forEach(show => this.gridTarget.appendChild(show));
+        }
     }
 
     async getFavouritesSlugs() {
         const listId = await GetFavouritesListId();
-        return (await db.listShows.where({ listId }).toArray()).map(ls => ls.slug);
+        const entries = await db.listShows.where({ listId }).toArray();
+
+        this.favouriteOrder = new Map(
+            entries.map(entry => [entry.slug, entry.id])
+        );
+
+        return entries.map(entry => entry.slug);
     }
 }
