@@ -5,7 +5,12 @@
 <% content_for :meta_title, "Favourites on Gizz Tapes" %>
 
 <div class="container mx-auto mt-8 px-5"
-     data-action="keydown@window->favourites#handleFusionKey">
+     data-action="keydown@window->favourites#handleFusionKey
+                 mousedown@window->favourites#handleGroupSelectionMouseDown:capture
+                 mousemove@window->favourites#moveGroupMarquee
+                 mouseup@window->favourites#endGroupMarquee
+                 blur@window->favourites#handleGroupSelectionBlur
+                 click@window->favourites#guardMarqueeClick:capture">
     <h2 class="text-3xl font-bold mb-8 text-center text-black dark:text-white">
         Favourite Shows
     </h2>
@@ -85,7 +90,7 @@
             </div>
             <p data-favourites-target="linkStatus" class="text-sm px-2 mb-2" role="status" aria-live="polite"></p>
 
-            <div data-action="click->favourites#selectShow" busy data-favourites-target="grid" id="favourites-grid" class="responsive-grid">
+            <div data-action="mousedown->favourites#startGroupMarquee contextmenu->favourites#suppressGroupContextMenu dragstart->favourites#guardMarqueeDrag click->favourites#selectShow dragover->favourites#groupDragOver dragleave->favourites#groupDragLeave drop->favourites#groupDrop" busy data-favourites-target="grid" id="favourites-grid" class="responsive-grid">
 
             </div>
 

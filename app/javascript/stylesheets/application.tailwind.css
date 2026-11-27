@@ -158,6 +158,8 @@
 
 .linked-show-group .featured-item {
     min-width: 0;
+    height: auto;
+    align-self: stretch;
 }
 
 .linked-show-group .unlink-group-button {
@@ -308,4 +310,247 @@
 .fusion-floating-controls .fusion-confirm-button:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+}
+/* Individual group drag handle */
+.linked-show-group .group-drag-handle {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 16px;
+    padding: 0;
+    border: 1px solid var(--group-colour, #18b182);
+    border-radius: 4px;
+    background: var(--group-colour, #18b182);
+    color: #10251e;
+    cursor: grab;
+    user-select: none;
+}
+
+.linked-show-group .group-drag-handle:active {
+    cursor: grabbing;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .linked-show-group .group-drag-handle {
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 150ms ease;
+    }
+
+    .linked-show-group:hover .group-drag-handle,
+    .linked-show-group:focus-within .group-drag-handle {
+        opacity: 1;
+        pointer-events: auto;
+    }
+}
+
+.group-selection-active .group-drag-handle {
+    display: none;
+}
+/* Separate individual selection outlines from the group outline */
+.linked-show-group .featured-item.selected-for-group {
+    outline-offset: -8px;
+}
+/* Dim the original group during dragging */
+.linked-show-group.group-dragging {
+    opacity: 0.35;
+}
+
+.linked-show-group.group-dragging .group-drag-handle {
+    cursor: grabbing;
+}
+/* Compact poster-only group drag preview */
+.linked-show-group.group-drag-preview {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 9999;
+    pointer-events: none;
+    opacity: 1;
+    margin: 0;
+    background: transparent;
+    align-items: start;
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--group-colour, #18b182);
+}
+
+.group-drag-preview .featured-item {
+    height: fit-content;
+    align-self: start;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+    background: transparent;
+}
+
+.group-drag-preview .featured-item img {
+    display: block;
+}
+/* Group drop destination feedback */
+.group-drop-indicator {
+    position: fixed;
+    z-index: 19;
+    pointer-events: none;
+    box-sizing: border-box;
+    border: 2px dashed;
+    border-radius: 0.75rem;
+}
+
+.group-drop-indicator.valid {
+    border-color: #18b182;
+    background: rgba(24, 177, 130, 0.12);
+}
+
+.group-drop-indicator.invalid {
+    border-color: #e05252;
+    background: rgba(224, 82, 82, 0.12);
+}
+.group-drop-indicator.swap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-color: #e59b32;
+    background: rgba(229, 155, 50, .12);
+    color: #e59b32;
+    font-size: 2.5rem;
+    font-weight: 700;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, .5);
+}
+.linked-show-group.group-bundle-selected {
+    outline: 2px solid var(--group-colour, #18b182);
+}
+
+.group-selection-marquee {
+    position: fixed;
+    z-index: 19;
+    pointer-events: none;
+    box-sizing: border-box;
+    border: 1px solid #60a5fa;
+    background: rgba(96, 165, 250, 0.15);
+}
+
+.linked-show-group.group-bundle-selected .group-drag-handle,
+.linked-show-group.group-bundle-selected .edit-group-button,
+.linked-show-group.group-bundle-selected .unlink-group-button {
+    display: none;
+}
+
+
+.group-bundle-handle {
+    position: fixed;
+    transform: translate(-50%, -50%);
+    z-index: 19;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 16px;
+    padding: 0;
+    border: 1px solid #60a5fa;
+    border-radius: 4px;
+    background: #60a5fa;
+    color: #10243d;
+    cursor: grab;
+    user-select: none;
+}
+
+.group-bundle-handle:active {
+    cursor: grabbing;
+}
+
+.group-bundle-preview {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 9999;
+    pointer-events: none;
+    overflow: visible;
+}
+
+.group-bundle-preview .group-drag-preview {
+    position: absolute;
+    opacity: 1;
+    margin: 0;
+}
+
+
+/* Unified animated selection outline */
+
+.group-bundle-outline {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 18;
+    pointer-events: none;
+    overflow: visible;
+}
+
+.group-bundle-outline path {
+    fill: none;
+    stroke-width: 2;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+}
+
+.bundle-outline-base {
+    stroke: #2563eb;
+}
+
+.bundle-outline-ants {
+    stroke: #93c5fd;
+    stroke-dasharray: 6 6;
+    animation: bundle-marching-ants 950ms linear infinite;
+}
+
+@keyframes bundle-marching-ants {
+    from {
+        stroke-dashoffset: 0;
+    }
+    to {
+        stroke-dashoffset: -12;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .bundle-outline-ants {
+        animation: none;
+    }
+}
+
+
+/* Magnetic insertion feedback */
+
+.group-insertion-indicator {
+    position: fixed;
+    z-index: 19;
+    height: 6px;
+    transform: translateY(-50%);
+    border-radius: 999px;
+    background: #18b182;
+    box-shadow: 0 0 8px rgba(24, 177, 130, 0.55);
+    pointer-events: none;
+    animation: group-insertion-enter 120ms ease-out;
+}
+
+@keyframes group-insertion-enter {
+    from {
+        opacity: 0.35;
+        box-shadow: 0 0 16px rgba(24, 177, 130, 0.8);
+    }
+    to {
+        opacity: 1;
+        box-shadow: 0 0 8px rgba(24, 177, 130, 0.55);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .group-insertion-indicator {
+        animation: none;
+    }
 }
