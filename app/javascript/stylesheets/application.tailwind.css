@@ -820,3 +820,182 @@
         animation: none;
     }
 }
+
+
+/* Fusion ignition sequence */
+
+.fusion-energy {
+    position: absolute;
+    inset: -6px;
+    width: calc(100% + 12px);
+    height: calc(100% + 12px);
+    overflow: visible;
+    pointer-events: none;
+    z-index: 12;
+    color: var(--group-colour, #18b182);
+}
+
+.fusion-energy rect {
+    fill: none;
+    stroke: currentColor;
+}
+
+.fusion-energy-halo {
+    stroke-width: 7;
+    filter: blur(4px);
+    animation: fusion-ignition 800ms ease-out both;
+}
+
+.fusion-energy-trail {
+    stroke-width: 4;
+    stroke-linecap: round;
+    stroke-dasharray: 22 78;
+    filter: blur(2px);
+    animation: fusion-circulation 800ms linear both;
+}
+
+.fusion-energy-impulse {
+    stroke: #fff !important;
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    stroke-dasharray: 8 92;
+    filter: drop-shadow(0 0 4px currentColor);
+    animation: fusion-circulation 800ms linear both;
+}
+
+@keyframes fusion-ignition {
+    0% {
+        opacity: 0;
+    }
+
+    12% {
+        opacity: 1;
+    }
+
+    40% {
+        opacity: 0.45;
+    }
+
+    74% {
+        opacity: 0.25;
+    }
+
+    100% {
+        opacity: 0;
+    }
+}
+
+@keyframes fusion-circulation {
+    0% {
+        opacity: 0;
+        stroke-dashoffset: 0;
+    }
+
+    12% {
+        opacity: 1;
+        stroke-dashoffset: 0;
+    }
+
+    74% {
+        opacity: 1;
+        stroke-dashoffset: -100;
+    }
+
+    100% {
+        opacity: 0;
+        stroke-dashoffset: -100;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .fusion-energy {
+        display: none;
+    }
+}
+
+
+
+/* Fission dispersion sequence */
+
+.fission-energy {
+    position: fixed;
+    overflow: visible;
+    pointer-events: none;
+    z-index: 50;
+}
+
+.fission-energy rect {
+    fill: none;
+}
+
+.fission-flash {
+    stroke: #fff;
+    stroke-width: 2;
+    animation: fission-release 350ms ease-out both;
+}
+
+.fission-fragment {
+    stroke: currentColor;
+    stroke-width: 4;
+    stroke-linecap: round;
+    animation: fission-disperse 350ms ease-out both;
+}
+
+@keyframes fission-release {
+    0% {
+        opacity: 0.85;
+    }
+
+    100% {
+        opacity: 0;
+    }
+}
+
+@keyframes fission-disperse {
+    0% {
+        opacity: 1;
+        stroke-width: 4;
+        transform: translate(0, 0);
+    }
+
+    45% {
+        opacity: 1;
+        stroke-width: 3.5;
+    }
+
+    75% {
+        opacity: 0.7;
+        stroke-width: 2.5;
+    }
+
+    100% {
+        opacity: 0;
+        stroke-width: 1;
+        transform: translate(
+            var(--fission-x),
+            var(--fission-y)
+        );
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .fission-energy {
+        display: none;
+    }
+}
+
+
+/* Content-sized group name input */
+
+.group-name-input {
+    field-sizing: content;
+    width: auto;
+    min-width: min(12ch, calc(50% - 2rem));
+    max-width: calc(50% - 2rem);
+}
+
+@supports not (field-sizing: content) {
+    .group-name-input {
+        width: 16ch;
+    }
+}

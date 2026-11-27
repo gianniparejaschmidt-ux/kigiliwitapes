@@ -2263,6 +2263,10 @@ private renderBoardLayout() {
                 this.floatingControlsTarget.contains(document.activeElement)
             );
 
+        const fusionKey = this.editingGroup === null
+            ? groupKey(this.selectedSlugs)
+            : null;
+
         let groups = this.savedGroups();
 
         if (this.editingGroup) {
@@ -2300,9 +2304,76 @@ private renderBoardLayout() {
         this.applyFavouriteSort();
         this.updateLinkControls();
 
+        if (fusionKey !== null) {
+            this.animateFusion(fusionKey);
+        }
+
         if (restoreFocus) {
             this.linkButtonTarget.focus({ preventScroll: true });
         }
+    }
+
+
+    private animateFusion(key: string) {
+        if (window.matchMedia(
+            "(prefers-reduced-motion: reduce)"
+        ).matches) return;
+
+        const group = Array.from(
+            this.gridTarget.querySelectorAll<HTMLElement>(
+                "[data-linked-group]"
+            )
+        ).find(element => element.dataset.boardKey === key);
+
+        if (!group) return;
+
+        const svgNS = "http://www.w3.org/2000/svg";
+
+        const rect = group.getBoundingClientRect();
+
+        if (rect.width < 8 || rect.height < 8) return;
+
+        const svg = document.createElementNS(svgNS, "svg");
+
+        svg.setAttribute("class", "fusion-energy");
+        svg.setAttribute("aria-hidden", "true");
+
+        svg.setAttribute(
+            "viewBox",
+            `0 0 ${rect.width + 12} ${rect.height + 12}`
+        );
+
+        const createRing = (className: string) => {
+            const ring = document.createElementNS(svgNS, "rect");
+
+            ring.setAttribute("x", "6");
+            ring.setAttribute("y", "6");
+            ring.setAttribute("width", String(rect.width));
+            ring.setAttribute("height", String(rect.height));
+            ring.setAttribute("rx", "12");
+            ring.setAttribute("pathLength", "100");
+            ring.setAttribute("class", className);
+
+            svg.appendChild(ring);
+
+            return ring;
+        };
+
+        createRing("fusion-energy-halo");
+        createRing("fusion-energy-trail");
+        const impulse = createRing("fusion-energy-impulse");
+
+        group.appendChild(svg);
+
+        const cleanup = () => svg.remove();
+
+        impulse.addEventListener(
+            "animationend",
+            cleanup,
+            { once: true }
+        );
+
+        window.setTimeout(cleanup, 1100);
     }
 
     private closeContextualGroupEditing() {
@@ -2403,6 +2474,11 @@ private renderBoardLayout() {
         if (this.linking) return;
         const group = (event.target as HTMLElement).closest<HTMLElement>('[data-linked-group]');
         if (!group) return;
+
+        const fissionRect = group.getBoundingClientRect();
+        const fissionColour = getComputedStyle(group)
+            .getPropertyValue("--group-colour").trim()
+            || "#18b182";
         const slugs = Array.from(group.querySelectorAll<HTMLElement>('.featured-item')).map(card => this.showSlug(card));
         const colours = this.savedGroupColours();
 
@@ -2414,9 +2490,192 @@ private renderBoardLayout() {
         );
         this.saveGroups(this.savedGroups().filter(saved => !saved.every(slug => slugs.includes(slug))));
         this.updateBoardGroup(slugs, null);
-        this.renderLinkedGroups();
-        this.applyFavouriteSort();
-        this.updateLinkControls();
+        const redistribute = () => {
+            this.renderLinkedGroups();
+            this.applyFavouriteSort();
+            this.updateLinkControls();
+        };
+
+        if (window.matchMedia(
+            "(prefers-reduced-motion: reduce)"
+        ).matches) {
+            redistribute();
+            return;
+        }
+
+        this.closeContextualGroupEditing();
+
+        group.style.outlineColor = "transparent";
+        group.style.boxShadow = "none";
+
+        const wasInert = this.element.hasAttribute("inert");
+
+        this.element.setAttribute("inert", "");
+        this.gridTarget.setAttribute("busy", "");
+
+        this.animateFission(fissionRect, fissionColour);
+
+        window.setTimeout(() => {
+            try {
+                if (this.gridTarget.isConnected) {
+                    redistribute();
+                    this.animateReleasedShows(slugs, fissionColour);
+                }
+            } finally {
+                this.gridTarget.removeAttribute("busy");
+
+                if (!wasInert) {
+                    this.element.removeAttribute("inert");
+                }
+            }
+        }, 350);
+    }
+
+
+
+    private animateReleasedShows(
+        slugs: string[],
+        colour: string
+    ) {
+        if (window.matchMedia(
+            "(prefers-reduced-motion: reduce)"
+        ).matches) return;
+
+        const released = new Set(slugs);
+
+        const cards = Array.from(
+            this.gridTarget.querySelectorAll<HTMLElement>(
+                ".featured-item"
+            )
+        );
+
+        for (const card of cards) {
+            if (!released.has(this.showSlug(card))) continue;
+
+            const rect = card.getBoundingClientRect();
+
+            if (
+                rect.bottom < 0 ||
+                rect.top > window.innerHeight
+            ) continue;
+
+            const poster = card.querySelector("img");
+
+            if (!poster) continue;
+
+            poster.animate([
+                {
+                    boxShadow: `0 0 0 2px ${colour}, 0 0 12px ${colour}`
+                },
+                {
+                    boxShadow: `0 0 0 1px ${colour}`
+                },
+                {
+                    boxShadow: "0 0 0 0 transparent"
+                }
+            ], {
+                duration: 450,
+                easing: "ease-out"
+            });
+        }
+    }
+
+    private animateFission(rect: DOMRect, colour: string) {
+        if (window.matchMedia(
+            "(prefers-reduced-motion: reduce)"
+        ).matches) return;
+
+        if (rect.width < 8 || rect.height < 8) return;
+
+        const ns = "http://www.w3.org/2000/svg";
+        const padding = 32;
+        const width = rect.width + padding * 2;
+        const height = rect.height + padding * 2;
+
+        const svg = document.createElementNS(ns, "svg");
+
+        svg.setAttribute("class", "fission-energy");
+        svg.setAttribute("aria-hidden", "true");
+        svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+
+        Object.assign(svg.style, {
+            left: `${rect.left - padding}px`,
+            top: `${rect.top - padding}px`,
+            width: `${width}px`,
+            height: `${height}px`,
+            color: colour
+        });
+
+        const createRing = (className: string) => {
+            const ring = document.createElementNS(ns, "rect");
+
+            ring.setAttribute("x", String(padding));
+            ring.setAttribute("y", String(padding));
+            ring.setAttribute("width", String(rect.width));
+            ring.setAttribute("height", String(rect.height));
+            ring.setAttribute("rx", "12");
+            ring.setAttribute("pathLength", "100");
+            ring.setAttribute("class", className);
+
+            svg.appendChild(ring);
+
+            return ring;
+        };
+
+        const flash = createRing("fission-flash");
+
+        document.body.appendChild(svg);
+
+        const length = flash.getTotalLength();
+        const fragments = 8;
+
+        for (let i = 0; i < fragments; i++) {
+            const segment = createRing("fission-fragment");
+
+            const fraction = i / fragments;
+            const point = flash.getPointAtLength(
+                length * (fraction + 0.0625)
+            );
+
+            const dx = point.x - width / 2;
+            const dy = point.y - height / 2;
+            const magnitude = Math.hypot(dx, dy) || 1;
+            const distance = 18 + (i % 3) * 4;
+
+            segment.setAttribute(
+                "stroke-dasharray", "11.5 88.5"
+            );
+
+            segment.setAttribute(
+                "stroke-dashoffset", String(-fraction * 100)
+            );
+
+            segment.style.setProperty(
+                "--fission-x",
+                `${dx / magnitude * distance}px`
+            );
+
+            segment.style.setProperty(
+                "--fission-y",
+                `${dy / magnitude * distance}px`
+            );
+        }
+
+        const cleanup = () => {
+            svg.remove();
+
+            window.removeEventListener("scroll", cleanup, true);
+            window.removeEventListener("resize", cleanup);
+        };
+
+        window.addEventListener("scroll", cleanup, {
+            capture: true,
+            passive: true
+        });
+
+        window.addEventListener("resize", cleanup);
+
+        window.setTimeout(cleanup, 350);
     }
 
     private updateLinkControls() {
