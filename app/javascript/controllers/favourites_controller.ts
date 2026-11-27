@@ -860,9 +860,13 @@ export default class extends Controller {
                 case "date-asc":
                     return valueFor(a, "sortDate").localeCompare(valueFor(b, "sortDate"));
                 case "venue-asc":
-                    return collator.compare(valueFor(a, "sortVenue"), valueFor(b, "sortVenue"));
+                    return collator.compare(valueFor(a, "sortVenue"), valueFor(b, "sortVenue"))
+                        || valueFor(b, "sortDate").localeCompare(valueFor(a, "sortDate"))
+                        || this.showSlug(a).localeCompare(this.showSlug(b));
                 case "city-asc":
-                    return collator.compare(valueFor(a, "sortCity"), valueFor(b, "sortCity"));
+                    return collator.compare(valueFor(a, "sortCity"), valueFor(b, "sortCity"))
+                        || valueFor(b, "sortDate").localeCompare(valueFor(a, "sortDate"))
+                        || this.showSlug(a).localeCompare(this.showSlug(b));
                 case "date-desc":
                 default:
                     return valueFor(b, "sortDate").localeCompare(valueFor(a, "sortDate"));
