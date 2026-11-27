@@ -628,3 +628,31 @@
     opacity: 0;
     pointer-events: none;
 }
+
+
+/* Native drag-preview and post-drop refinements */
+
+/* Keep group controls clear of the poster artwork. */
+
+.linked-show-group:not(.group-drag-preview) {
+    padding-top: 6px;
+    padding-bottom: 6px;
+}
+
+/* Prevent contextual controls from flashing after a drop. */
+
+#favourites-grid.group-post-drop .group-name-label.unnamed,
+#favourites-grid.group-post-drop .edit-group-button,
+#favourites-grid.group-post-drop .unlink-group-button,
+#favourites-grid.group-post-drop .group-drag-handle {
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* Artwork-only drag previews. */
+
+.group-drag-preview canvas {
+    display: block;
+    margin-inline: auto;
+    pointer-events: none;
+}

@@ -225,7 +225,13 @@ export default class extends Controller {
             const retained =
                 this.insertionTarget?.row === boundary.row;
 
-            const radius = 21.5 + (retained ? 9 : 0);
+            const activationRadius = Math.max(
+                21.5,
+                geometry.rowGap / 2 + 9
+            );
+
+            const radius =
+                activationRadius + (retained ? 9 : 0);
 
             return Math.abs(
                 event.clientY - boundary.y
@@ -734,31 +740,77 @@ export default class extends Controller {
         attach = true
     ): HTMLElement {
         const rect = group.getBoundingClientRect();
-        const preview = group.cloneNode(true) as HTMLElement;
+        const preview = document.createElement("div");
 
-        preview.querySelectorAll(
-            "h4, small, .edit-group-button, .unlink-group-button, .group-drag-handle, .group-name-label, .group-name-input"
-        ).forEach(element => element.remove());
+        preview.className = "linked-show-group group-drag-preview";
 
-        preview.removeAttribute("data-linked-group");
-        preview.removeAttribute("data-board-key");
-
-        preview.querySelectorAll("[data-action], [data-favourites-target]")
-            .forEach(element => {
-                element.removeAttribute("data-action");
-                element.removeAttribute("data-favourites-target");
-            });
-
-        preview.classList.remove(
-            "group-bundle-selected",
-            "group-dragging"
+        preview.style.setProperty(
+            "--group-colour",
+            group.style.getPropertyValue("--group-colour")
         );
-        preview.classList.add("group-drag-preview");
 
-        preview.style.removeProperty("grid-row");
-        preview.style.removeProperty("grid-column");
+        preview.style.setProperty(
+            "--group-size",
+            group.style.getPropertyValue("--group-size")
+        );
+
         preview.style.width = `${rect.width}px`;
         preview.style.height = "auto";
+
+        for (const card of group.querySelectorAll(".featured-item")) {
+            const original = card.querySelector("img");
+            if (!original) continue;
+
+            const bounds = original.getBoundingClientRect();
+            const wrapper = document.createElement("div");
+
+            wrapper.className = "featured-item";
+            wrapper.style.background = "transparent";
+
+            const artwork = document.createElement("canvas");
+
+            artwork.width = Math.max(
+                1,
+                Math.round(bounds.width * window.devicePixelRatio)
+            );
+
+            artwork.height = Math.max(
+                1,
+                Math.round(bounds.height * window.devicePixelRatio)
+            );
+
+            artwork.style.display = "block";
+            artwork.style.width = `${bounds.width}px`;
+            artwork.style.height = `${bounds.height}px`;
+            artwork.style.maxWidth = "100%";
+            artwork.style.borderRadius = "0.75rem";
+
+            const context = artwork.getContext("2d");
+
+            if (
+                context &&
+                original.complete &&
+                original.naturalWidth > 0
+            ) {
+                context.drawImage(
+                    original, 0, 0,
+                    artwork.width, artwork.height
+                );
+
+                wrapper.appendChild(artwork);
+            } else {
+                const image = original.cloneNode(true) as HTMLImageElement;
+
+                image.style.width = `${bounds.width}px`;
+                image.style.height = `${bounds.height}px`;
+                image.loading = "eager";
+                image.draggable = false;
+
+                wrapper.appendChild(image);
+            }
+
+            preview.appendChild(wrapper);
+        }
 
         preview.setAttribute("aria-hidden", "true");
         preview.inert = true;
@@ -841,7 +893,81 @@ export default class extends Controller {
     endGroupDrag() {
         this.cancelGroupDrag();
     }
+    private dropHoverOrigin: { x: number; y: number } | null = null;
+    private dropHoverGrid: HTMLElement | null = null;
+
+    private clearDropHover = () => {
+        this.dropHoverGrid?.classList.remove(
+            "group-post-drop"
+        );
+
+        this.dropHoverOrigin = null;
+        this.dropHoverGrid = null;
+
+        window.removeEventListener(
+            "pointermove", this.releaseDropHover, true
+        );
+
+        window.removeEventListener(
+            "keydown", this.releaseDropHoverOnKey, true
+        );
+    };
+
+    private releaseDropHover = (event: PointerEvent) => {
+        const origin = this.dropHoverOrigin;
+        if (!origin) return;
+
+        if (
+            event.clientX !== origin.x ||
+            event.clientY !== origin.y
+        ) {
+            this.clearDropHover();
+        }
+    };
+
+    private releaseDropHoverOnKey = (event: KeyboardEvent) => {
+        if (event.key === "Tab") {
+            this.clearDropHover();
+        }
+    };
+
+    private suppressDropHover(event: DragEvent) {
+        this.clearDropHover();
+
+        const focused = document.activeElement;
+
+        if (
+            focused instanceof HTMLElement &&
+            focused.matches(".group-drag-handle, .group-bundle-handle")
+        ) {
+            focused.blur();
+        }
+
+        if (!this.hasGridTarget) return;
+
+        this.dropHoverGrid = this.gridTarget;
+
+        this.dropHoverOrigin = {
+            x: event.clientX,
+            y: event.clientY
+        };
+
+        this.dropHoverGrid.classList.add("group-post-drop");
+
+        window.addEventListener(
+            "pointermove", this.releaseDropHover, true
+        );
+
+        window.addEventListener(
+            "keydown", this.releaseDropHoverOnKey, true
+        );
+    }
+
     groupDrop(event: DragEvent) {
+        if (this.groupDrag || this.bundleDrag) {
+            this.suppressDropHover(event);
+        }
+
         if (
             (this.groupDrag || this.bundleDrag) &&
             this.handleInsertionDrop(event)
@@ -1027,6 +1153,7 @@ export default class extends Controller {
         });
     };
     disconnect() {
+        this.clearDropHover();
         this.cancelGroupMarquee();
         this.clearGroupSelection();
         window.removeEventListener("resize", this.handleBoardResize);
@@ -1591,7 +1718,9 @@ private renderBoardLayout() {
         this.gridTarget.style.gridTemplateRows =
             `repeat(${lastRow + 1}, minmax(${rowHeight}px, auto))`;
 
-        this.gridTarget.style.rowGap = "24px";
+        this.gridTarget.style.rowGap = "36px";
+        this.gridTarget.style.paddingTop = "54px";
+        this.gridTarget.style.marginTop = "-54px";
 
         const unfused = items.filter(item =>
             !item.hasAttribute("data-linked-group")
@@ -1604,8 +1733,44 @@ private renderBoardLayout() {
             item.style.gridColumn =
                 String(index % columns + 1);
         });
+
+        const orderedGroups = [...groups].sort((a, b) => {
+            const first = board[a.dataset.boardKey!];
+            const second = board[b.dataset.boardKey!];
+
+            return first.r - second.r || first.c - second.c;
+        });
+
+        this.syncBoardDOMOrder([
+            ...orderedGroups,
+            ...unfused
+        ]);
     }
+    private syncBoardDOMOrder(items: HTMLElement[]) {
+        const focused = document.activeElement;
+
+        for (let index = 0; index < items.length; index++) {
+            const current = this.sortableItems()[index];
+            const expected = items[index];
+
+            if (current && current !== expected) {
+                this.gridTarget.insertBefore(expected, current);
+            }
+        }
+
+        if (
+            focused instanceof HTMLElement &&
+            focused.isConnected &&
+            this.gridTarget.contains(focused) &&
+            document.activeElement !== focused
+        ) {
+            focused.focus({ preventScroll: true });
+        }
+    }
+
     private resetBoardLayout() {
+        this.gridTarget.style.removeProperty("padding-top");
+        this.gridTarget.style.removeProperty("margin-top");
         this.gridTarget.style.removeProperty("grid-template-rows");
         this.gridTarget.style.removeProperty("row-gap");
 
@@ -1645,6 +1810,22 @@ private renderBoardLayout() {
             justify-content: space-between;
             gap: 12px;
         }
+
+        .enhanced-sort-select::picker(select) {
+            width: 140px;
+            min-width: 140px;
+            max-width: 140px;
+            box-sizing: border-box;
+            border-radius: 0.5rem;
+            overflow: hidden;
+            transition: none;
+        }
+
+        .enhanced-sort-select option {
+            white-space: nowrap;
+        }
+
+
 
         .enhanced-sort-select::picker-icon {
             display: none;
@@ -1830,7 +2011,7 @@ private renderBoardLayout() {
 
             const name = this.createGroupNameLabel(slugs);
 
-            group.append(...shows, edit, unlink, handle, name);
+            group.append(name, handle, edit, ...shows, unlink);
             this.gridTarget.appendChild(group);
         }
     }
