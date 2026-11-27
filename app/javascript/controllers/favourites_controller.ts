@@ -1758,11 +1758,25 @@ private renderBoardLayout() {
     private syncBoardDOMOrder(items: HTMLElement[]) {
         const focused = document.activeElement;
 
-        for (let index = 0; index < items.length; index++) {
-            const current = this.sortableItems()[index];
-            const expected = items[index];
+        const isSortable = (element: Element): boolean =>
+            element instanceof HTMLElement &&
+            (
+                element.matches(".featured-item") ||
+                element.hasAttribute("data-linked-group")
+            );
 
-            if (current && current !== expected) {
+        let current = this.gridTarget.firstElementChild;
+
+        for (const expected of items) {
+            while (current && !isSortable(current)) {
+                current = current.nextElementSibling;
+            }
+
+            if (!current) break;
+
+            if (current === expected) {
+                current = current.nextElementSibling;
+            } else {
                 this.gridTarget.insertBefore(expected, current);
             }
         }
