@@ -11,45 +11,35 @@
   class="featured-item featured-show"
 >
   <div class="indicator w-full">
-    <%# <span class="indicator-item badge badge-primary shadow" style="margin-right: 15%;margin-top: 8%;">1hr35</span>
-        <span class="indicator-item badge badge-secondary shadow" style="margin-right: 15%;margin-top: 20%;">7 tapes</span>
-        <span class="indicator-item badge badge-neutral shadow" style="margin-right: 15%;margin-top: 32%;">SBD</span> %>
 
-    <span class="indicator-item badge badge-primary bg-opacity-60 backdrop-blur shadow transform-none mr-3 mt-3">
-      <%= show.recordings.where(is_active: true).count %>
-      tape<%= 's' unless show.recordings.where(is_active: true).count == 1 %>
-    </span>
+    <div class="concert-recording-badges">
 
-    <% if show.duration&.nonzero? %>
-            <span
-              class="indicator-item badge badge-neutral bg-opacity-60 backdrop-blur shadow transform-none mr-3"
-              style="margin-top:calc(0.5rem + 1.25rem + 0.5rem) !important;"
-            >
-              <% minutes = (show.duration / 60).floor %>
-              <% hours = (minutes / 60).floor %>
-              <%= format('%01d', hours) %>hr<%= format('%02d', minutes % 60) %>
-            </span>
-    <% end %>
+      <% if show.recordings.where(is_active: true).all?(&:is_incomplete) %>
+        <span class="badge badge-error bg-opacity-60 backdrop-blur shadow">
+          Incomplete
+        </span>
+      <% end %>
 
-    <% unless show.average_rating.nil? or show.count_ratings < 3 %>
-            <span
-              class="indicator-item badge badge-warning bg-opacity-60 backdrop-blur shadow transform-none mr-3"
-              <% if show.duration&.nonzero? %>
-              style="margin-top:calc(0.5rem + 1.25rem + 0.5rem + 1.25rem + 0.25rem) !important;"
-              <% else %>
-              style="margin-top:calc(0.5rem + 1.25rem + 0.5rem) !important;"
-              <% end %>
-              >
-              <%= format('%.1f', show.average_rating) %>&#9733;
-            </span>
-    <% end %>
-
-    <% if show.recordings.where(is_active: true).all?(&:is_incomplete) %>
-      <div class="flex-grow"></div>
-      <span class="indicator-item badge badge-error bg-opacity-60 backdrop-blur shadow transform-none mr-3 top-auto bottom-0 mb-3">
-        Incomplete
+      <span class="badge badge-primary bg-opacity-60 backdrop-blur shadow">
+        <%= show.recordings.where(is_active: true).count %>
+        tape<%= 's' unless show.recordings.where(is_active: true).count == 1 %>
       </span>
-    <% end %>
+
+      <% if show.duration&.nonzero? %>
+        <span class="badge badge-neutral bg-opacity-60 backdrop-blur shadow">
+          <% minutes = (show.duration / 60).floor %>
+          <% hours = (minutes / 60).floor %>
+          <%= format('%01d', hours) %>hr<%= format('%02d', minutes % 60) %>
+        </span>
+      <% end %>
+
+      <% unless show.average_rating.nil? or show.count_ratings < 3 %>
+        <span class="badge badge-warning bg-opacity-60 backdrop-blur shadow">
+          <%= format('%.1f', show.average_rating) %>&#9733;
+        </span>
+      <% end %>
+
+    </div>
 
     <% concert_title = show.title.to_s.strip %>
     <% concert_badge = concert_type_badge(concert_title) %>

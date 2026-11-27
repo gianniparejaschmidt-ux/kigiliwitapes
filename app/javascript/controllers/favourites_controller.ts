@@ -1139,6 +1139,10 @@ export default class extends Controller {
         this.groupDrag = null;
     }
     private handleBoardResize = () => {
+        if (!this.usesTouchGroupControls()) {
+            this.closeMobileGroupEditing();
+        }
+
         if (this.boardResizeFrame !== null) return;
 
         this.boardResizeFrame = requestAnimationFrame(() => {
@@ -1719,8 +1723,7 @@ private renderBoardLayout() {
             `repeat(${lastRow + 1}, minmax(${rowHeight}px, auto))`;
 
         this.gridTarget.style.rowGap = "36px";
-        this.gridTarget.style.paddingTop = "54px";
-        this.gridTarget.style.marginTop = "-54px";
+
 
         const unfused = items.filter(item =>
             !item.hasAttribute("data-linked-group")
@@ -1986,6 +1989,14 @@ private renderBoardLayout() {
             edit.setAttribute('aria-label', 'Edit this group');
             edit.dataset.action = "click->favourites#editGroup";
 
+            const editShows = document.createElement("button");
+            editShows.type = "button";
+            editShows.className = "mobile-edit-shows-button";
+            editShows.textContent = "Select";
+            editShows.setAttribute("aria-label", "Change group membership");
+            editShows.dataset.action = "click->favourites#editGroup";
+
+
                         const handle = document.createElement("button");
             handle.type = "button";
             handle.className = "group-drag-handle";
@@ -2011,7 +2022,7 @@ private renderBoardLayout() {
 
             const name = this.createGroupNameLabel(slugs);
 
-            group.append(name, handle, edit, ...shows, unlink);
+            group.append(name, handle, edit, ...shows, unlink, editShows);
             this.gridTarget.appendChild(group);
         }
     }
@@ -2251,6 +2262,54 @@ private renderBoardLayout() {
         }
     }
 
+    private usesTouchGroupControls(): boolean {
+        return window.matchMedia(
+            "(hover: none) and (pointer: coarse)"
+        ).matches;
+    }
+
+    private closeMobileGroupEditing() {
+        if (!this.hasGridTarget) return;
+
+        this.gridTarget
+            .querySelectorAll<HTMLElement>(".mobile-group-editing")
+            .forEach(group => {
+                group.classList.remove("mobile-group-editing");
+
+                const button = group.querySelector<HTMLButtonElement>(
+                    ".edit-group-button"
+                );
+
+                if (button) {
+                    button.textContent = "Change";
+                    button.setAttribute("aria-label", "Edit this group");
+                    button.removeAttribute("aria-expanded");
+                }
+            });
+    }
+
+    private toggleMobileGroupEditing(group: HTMLElement) {
+        const wasOpen = group.classList.contains(
+            "mobile-group-editing"
+        );
+
+        this.closeMobileGroupEditing();
+
+        if (wasOpen) return;
+
+        group.classList.add("mobile-group-editing");
+
+        const button = group.querySelector<HTMLButtonElement>(
+            ".edit-group-button"
+        );
+
+        if (button) {
+            button.textContent = "Done";
+            button.setAttribute("aria-label", "Close group editing");
+            button.setAttribute("aria-expanded", "true");
+        }
+    }
+
     editGroup(event: MouseEvent) {
         event.preventDefault();
         event.stopPropagation();
@@ -2259,6 +2318,19 @@ private renderBoardLayout() {
             .closest<HTMLElement>('[data-linked-group]');
 
         if (!group || this.linking) return;
+
+        const button = event.currentTarget;
+
+        if (
+            this.usesTouchGroupControls() &&
+            button instanceof HTMLElement &&
+            button.classList.contains("edit-group-button")
+        ) {
+            this.toggleMobileGroupEditing(group);
+            return;
+        }
+
+        this.closeMobileGroupEditing();
 
         const slugs = Array.from(
             group.querySelectorAll<HTMLElement>('.featured-item')
@@ -2297,6 +2369,10 @@ private renderBoardLayout() {
     }
 
     private updateLinkControls() {
+        if (this.linking) {
+            this.closeMobileGroupEditing();
+        }
+
         this.linkButtonTarget.classList.toggle(
             'hidden', !this.isIntertwined()
         );
