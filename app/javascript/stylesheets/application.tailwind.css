@@ -674,7 +674,7 @@
 
 /* Contextual group editing on touch devices */
 
-.mobile-edit-shows-button {
+.group-select-button {
     display: none;
     position: absolute;
     bottom: 0;
@@ -691,15 +691,15 @@
 }
 
 @media (hover: none) and (pointer: coarse) {
-    .linked-show-group:not(.mobile-group-editing)
+    .linked-show-group:not(.contextual-group-editing)
         > .group-name-label.unnamed,
-    .linked-show-group:not(.mobile-group-editing)
+    .linked-show-group:not(.contextual-group-editing)
         > .unlink-group-button {
         display: none;
     }
 
-    .linked-show-group.mobile-group-editing
-        > .mobile-edit-shows-button {
+    .linked-show-group.contextual-group-editing
+        > .group-select-button {
         display: block;
     }
 
@@ -709,7 +709,7 @@
     }
 }
 
-.group-selection-active .mobile-edit-shows-button {
+.group-selection-active .group-select-button {
     display: none;
 }
 
@@ -721,13 +721,13 @@
 }
 
 .linked-show-group .edit-group-button,
-.linked-show-group .mobile-edit-shows-button {
+.linked-show-group .group-select-button {
     background: var(--favourites-change-colour);
     border-color: var(--favourites-change-colour);
     color: #10251e;
 }
 
-.linked-show-group.mobile-group-editing .edit-group-button,
+.linked-show-group.contextual-group-editing .edit-group-button,
 .fusion-floating-controls .fusion-confirm-button,
 [data-favourites-target="linkFinish"] {
     background: var(--favourites-confirm-colour);
@@ -752,27 +752,51 @@
     white-space: nowrap;
 }
 
-/* Exclusive contextual editing on touch devices. */
 
-@media (hover: none) and (pointer: coarse) {
-    #favourites-grid:has(.mobile-group-editing)
-        .linked-show-group:not(.mobile-group-editing)
-        > .edit-group-button {
-        display: none;
-    }
+/* Unified contextual group editing */
+
+.linked-show-group {
+    transition: box-shadow 150ms ease;
 }
 
-/* Visual feedback for contextual group editing. */
+.linked-show-group:not(.contextual-group-editing)
+    > .group-name-label.unnamed,
+.linked-show-group:not(.contextual-group-editing)
+    > .unlink-group-button {
+    display: none;
+}
 
-@media (hover: none) and (pointer: coarse) {
-    .linked-show-group {
-        transition: box-shadow 150ms ease;
-    }
+.linked-show-group.contextual-group-editing
+    > .group-name-label,
+.linked-show-group.contextual-group-editing
+    > .unlink-group-button,
+.linked-show-group.contextual-group-editing
+    > .edit-group-button {
+    opacity: 1;
+    pointer-events: auto;
+}
 
-    .linked-show-group.mobile-group-editing {
-        box-shadow: 0 0 0 5px var(--favourites-change-colour);
-        animation: group-editing-breathe 3s ease-in-out infinite;
-    }
+.linked-show-group.contextual-group-editing
+    > .group-select-button {
+    display: block;
+}
+
+#favourites-grid:has(.contextual-group-editing)
+    .group-drag-handle,
+#favourites-grid:has(.contextual-group-editing)
+    .linked-show-group:not(.contextual-group-editing)
+    > .edit-group-button {
+    display: none;
+}
+
+.group-name-label:disabled {
+    opacity: 1;
+    cursor: default;
+}
+
+.linked-show-group.contextual-group-editing {
+    box-shadow: 0 0 0 5px var(--favourites-change-colour);
+    animation: group-editing-breathe 3s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -780,7 +804,6 @@
         transition: none;
     }
 }
-
 
 @keyframes group-editing-breathe {
     0%, 100% {
@@ -793,7 +816,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .linked-show-group.mobile-group-editing {
+    .linked-show-group.contextual-group-editing {
         animation: none;
     }
 }

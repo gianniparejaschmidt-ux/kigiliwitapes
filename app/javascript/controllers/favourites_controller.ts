@@ -820,7 +820,11 @@ export default class extends Controller {
         return preview;
     }
     startGroupDrag(event: DragEvent) {
-        if (this.groupMarquee || this.bundleDrag) {
+        if (
+            this.groupMarquee ||
+            this.bundleDrag ||
+            this.gridTarget.querySelector(".contextual-group-editing")
+        ) {
             event.preventDefault();
             return;
         }
@@ -1139,10 +1143,6 @@ export default class extends Controller {
         this.groupDrag = null;
     }
     private handleBoardResize = () => {
-        if (!this.usesTouchGroupControls()) {
-            this.closeMobileGroupEditing();
-        }
-
         if (this.boardResizeFrame !== null) return;
 
         this.boardResizeFrame = requestAnimationFrame(() => {
@@ -1575,6 +1575,12 @@ export default class extends Controller {
 
             if (!this.canSelectGroups()) return;
 
+            const activeGroup = this.gridTarget.querySelector(
+                ".contextual-group-editing"
+            );
+
+            if (activeGroup && !activeGroup.contains(label)) return;
+
             this.clearGroupSelection();
             this.editGroupName(label, slugs, update);
         });
@@ -1949,6 +1955,7 @@ private renderBoardLayout() {
     }
 
     private renderLinkedGroups() {
+        this.closeContextualGroupEditing();
         this.unwrapLinkedGroups();
 
         if (!this.isIntertwined()) return;
@@ -1986,12 +1993,13 @@ private renderBoardLayout() {
             edit.type = "button";
             edit.className = "edit-group-button";
             edit.textContent = "Change";
+            edit.setAttribute("aria-expanded", "false");
             edit.setAttribute('aria-label', 'Edit this group');
             edit.dataset.action = "click->favourites#editGroup";
 
             const editShows = document.createElement("button");
             editShows.type = "button";
-            editShows.className = "mobile-edit-shows-button";
+            editShows.className = "group-select-button";
             editShows.textContent = "Select";
             editShows.setAttribute("aria-label", "Change group membership");
             editShows.dataset.action = "click->favourites#editGroup";
@@ -2028,6 +2036,23 @@ private renderBoardLayout() {
     }
     handleFusionKey(event: KeyboardEvent) {
         if (event.key === "Escape") {
+            const activeGroup = this.hasGridTarget
+                ? this.gridTarget.querySelector<HTMLElement>(
+                    ".contextual-group-editing"
+                )
+                : null;
+
+            if (activeGroup) {
+                event.preventDefault();
+                this.closeContextualGroupEditing();
+
+                activeGroup.querySelector<HTMLButtonElement>(
+                    ".edit-group-button"
+                )?.focus({ preventScroll: true });
+
+                return;
+            }
+
             if (this.groupDrag) {
                 event.preventDefault();
                 this.cancelGroupDrag();
@@ -2147,6 +2172,10 @@ private renderBoardLayout() {
     }
 
     private toggleGroupSelection(event: MouseEvent): boolean {
+        if (this.gridTarget.querySelector(".contextual-group-editing")) {
+            return false;
+        }
+
         if (!event.shiftKey || !this.canSelectGroups()) {
             return false;
         }
@@ -2262,19 +2291,19 @@ private renderBoardLayout() {
         }
     }
 
-    private usesTouchGroupControls(): boolean {
-        return window.matchMedia(
-            "(hover: none) and (pointer: coarse)"
-        ).matches;
-    }
-
-    private closeMobileGroupEditing() {
+    private closeContextualGroupEditing() {
         if (!this.hasGridTarget) return;
 
         this.gridTarget
-            .querySelectorAll<HTMLElement>(".mobile-group-editing")
+            .querySelectorAll<HTMLButtonElement>(".group-name-label")
+            .forEach(label => {
+                label.disabled = false;
+            });
+
+        this.gridTarget
+            .querySelectorAll<HTMLElement>(".contextual-group-editing")
             .forEach(group => {
-                group.classList.remove("mobile-group-editing");
+                group.classList.remove("contextual-group-editing");
 
                 const button = group.querySelector<HTMLButtonElement>(
                     ".edit-group-button"
@@ -2283,21 +2312,30 @@ private renderBoardLayout() {
                 if (button) {
                     button.textContent = "Change";
                     button.setAttribute("aria-label", "Edit this group");
-                    button.removeAttribute("aria-expanded");
+                    button.setAttribute("aria-expanded", "false");
                 }
             });
     }
 
-    private toggleMobileGroupEditing(group: HTMLElement) {
+    private toggleContextualGroupEditing(group: HTMLElement) {
         const wasOpen = group.classList.contains(
-            "mobile-group-editing"
+            "contextual-group-editing"
         );
 
-        this.closeMobileGroupEditing();
+        this.closeContextualGroupEditing();
 
         if (wasOpen) return;
 
-        group.classList.add("mobile-group-editing");
+        this.cancelGroupMarquee();
+        this.clearGroupSelection();
+
+        group.classList.add("contextual-group-editing");
+
+        this.gridTarget
+            .querySelectorAll<HTMLButtonElement>(".group-name-label")
+            .forEach(label => {
+                label.disabled = !group.contains(label);
+            });
 
         const button = group.querySelector<HTMLButtonElement>(
             ".edit-group-button"
@@ -2322,15 +2360,14 @@ private renderBoardLayout() {
         const button = event.currentTarget;
 
         if (
-            this.usesTouchGroupControls() &&
             button instanceof HTMLElement &&
             button.classList.contains("edit-group-button")
         ) {
-            this.toggleMobileGroupEditing(group);
+            this.toggleContextualGroupEditing(group);
             return;
         }
 
-        this.closeMobileGroupEditing();
+        this.closeContextualGroupEditing();
 
         const slugs = Array.from(
             group.querySelectorAll<HTMLElement>('.featured-item')
@@ -2370,7 +2407,7 @@ private renderBoardLayout() {
 
     private updateLinkControls() {
         if (this.linking) {
-            this.closeMobileGroupEditing();
+            this.closeContextualGroupEditing();
         }
 
         this.linkButtonTarget.classList.toggle(
