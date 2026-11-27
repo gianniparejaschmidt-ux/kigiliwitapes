@@ -6,6 +6,7 @@ import { loadBoardLayouts, saveBoardLayouts, groupKey, reconcileBoard, updateGro
 import type { InsertionPiece, Board, BoardColumns, BoardLayouts, BoardPiece, BoardPosition } from "../favourites_board";
 
 const GROUPS_STORAGE_KEY = "gizz-tapes:favourite-pairs"; // Keep existing saved pairs compatible.
+const GROUP_NAMES_STORAGE_KEY = "gizz-tapes:favourite-group-names";
 const SORT_STORAGE_KEY = "gizz-tapes:favourites-sort";
 const GROUP_COLOURS = [
     "#18b182", // Green
@@ -736,7 +737,7 @@ export default class extends Controller {
         const preview = group.cloneNode(true) as HTMLElement;
 
         preview.querySelectorAll(
-            "h4, small, .edit-group-button, .unlink-group-button, .group-drag-handle"
+            "h4, small, .edit-group-button, .unlink-group-button, .group-drag-handle, .group-name-label, .group-name-input"
         ).forEach(element => element.remove());
 
         preview.removeAttribute("data-linked-group");
@@ -1340,10 +1341,184 @@ export default class extends Controller {
 
         return colours[key];
     }
+    private savedGroupNames(): Record<string, string> {
+        try {
+            const stored = JSON.parse(
+                localStorage.getItem(GROUP_NAMES_STORAGE_KEY) || "{}"
+            );
+
+            if (!stored || typeof stored !== "object" ||
+                Array.isArray(stored)) return {};
+
+            return Object.fromEntries(
+                Object.entries(stored).filter(
+                    ([, value]) => typeof value === "string"
+                )
+            ) as Record<string, string>;
+        } catch {
+            return {};
+        }
+    }
+
+    private groupName(slugs: string[]): string {
+        return this.savedGroupNames()[groupKey(slugs)] || "";
+    }
+
+    private saveGroupName(key: string, value: string): boolean {
+        const names = this.savedGroupNames();
+        const name = value.trim();
+
+        if (name) {
+            names[key] = name;
+        } else {
+            delete names[key];
+        }
+
+        try {
+            localStorage.setItem(
+                GROUP_NAMES_STORAGE_KEY,
+                JSON.stringify(names)
+            );
+            return true;
+        } catch (error) {
+            console.warn("Unable to save group name", error);
+            return false;
+        }
+    }
+
+    private transferGroupName(
+        previousSlugs: string[] | null,
+        nextSlugs: string[] | null
+    ) {
+        if (!previousSlugs) return;
+
+        const names = this.savedGroupNames();
+        const previousKey = groupKey(previousSlugs);
+        const name = names[previousKey];
+
+        if (!name) return;
+
+        delete names[previousKey];
+
+        if (nextSlugs) {
+            names[groupKey(nextSlugs)] = name;
+        }
+
+        try {
+            localStorage.setItem(
+                GROUP_NAMES_STORAGE_KEY,
+                JSON.stringify(names)
+            );
+        } catch (error) {
+            console.warn("Unable to update group names", error);
+        }
+    }
+
+    private createGroupNameLabel(slugs: string[]): HTMLButtonElement {
+        const label = document.createElement("button");
+
+        label.type = "button";
+        label.className = "group-name-label";
+
+        const update = () => {
+            const name = this.groupName(slugs);
+
+            label.textContent = name || "Name";
+            label.classList.toggle("unnamed", !name);
+
+            label.title = name
+                ? `${name} — Rename group`
+                : "Name this group";
+
+            label.setAttribute(
+                "aria-label",
+                name ? `Rename group: ${name}` : "Name this group"
+            );
+        };
+
+        update();
+
+        label.addEventListener("click", event => {
+            event.preventDefault();
+            event.stopPropagation();
+
+            if (!this.canSelectGroups()) return;
+
+            this.clearGroupSelection();
+            this.editGroupName(label, slugs, update);
+        });
+
+        return label;
+    }
+
+    private editGroupName(
+        label: HTMLButtonElement,
+        slugs: string[],
+        update: () => void
+    ) {
+        const input = document.createElement("input");
+
+        input.type = "text";
+        input.className = "group-name-input";
+        input.maxLength = 100;
+        input.value = this.groupName(slugs);
+        input.placeholder = "Group name";
+        input.setAttribute("aria-label", "Group name");
+
+        let finished = false;
+
+        const finish = (save: boolean) => {
+            if (finished) return;
+
+            if (save && !this.saveGroupName(
+                groupKey(slugs), input.value
+            )) {
+                input.setCustomValidity("Unable to save group name");
+                input.reportValidity();
+                return;
+            }
+
+            finished = true;
+
+            input.replaceWith(label);
+            update();
+        };
+
+        input.addEventListener("input", () => {
+            input.setCustomValidity("");
+        });
+
+        input.addEventListener("click", event => {
+            event.stopPropagation();
+        });
+
+        input.addEventListener("keydown", event => {
+            event.stopPropagation();
+
+            if (event.isComposing) return;
+
+            if (event.key === "Enter" || event.key === "Escape") {
+                event.preventDefault();
+                finish(event.key === "Enter");
+                if (finished) {
+                    label.focus({ preventScroll: true });
+                }
+            }
+        });
+
+        input.addEventListener("blur", () => finish(false));
+
+        label.replaceWith(input);
+        input.focus({ preventScroll: true });
+        input.select();
+    }
+
     private updateBoardGroup(
         previousSlugs: string[] | null,
         nextSlugs: string[] | null
     ) {
+        this.transferGroupName(previousSlugs, nextSlugs);
+
         const nextLayouts = updateGroupPosition(
             this.boardLayouts,
             previousSlugs,
@@ -1653,7 +1828,9 @@ private renderBoardLayout() {
                 </svg>
             `;
 
-            group.append(...shows, edit, unlink, handle);
+            const name = this.createGroupNameLabel(slugs);
+
+            group.append(...shows, edit, unlink, handle, name);
             this.gridTarget.appendChild(group);
         }
     }

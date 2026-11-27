@@ -554,3 +554,77 @@
         animation: none;
     }
 }
+
+
+/* Personal group names */
+
+.group-name-label,
+.group-name-input {
+    position: absolute;
+    top: 0;
+    left: 0.5rem;
+    transform: translateY(-50%);
+    z-index: 10;
+    box-sizing: border-box;
+    max-width: calc(50% - 2rem);
+    min-width: 0;
+    padding: 0.15rem 0.5rem;
+    border: 1px solid var(--group-colour, #18b182);
+    border-radius: 0.4rem;
+    background: var(--fallback-b1, oklch(var(--b1)));
+    color: var(--group-colour, #18b182);
+    font-size: 0.75rem;
+    line-height: 1.25;
+}
+
+.group-name-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: text;
+}
+
+.group-name-input {
+    width: calc(50% - 2rem);
+    outline: none;
+}
+
+.group-name-input:focus {
+    box-shadow: 0 0 0 1px var(--group-colour, #18b182);
+}
+
+.group-name-label:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 1px var(--group-colour, #18b182);
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .group-name-label.unnamed {
+        opacity: 0;
+        transition: opacity 150ms ease;
+    }
+
+    .linked-show-group:hover .group-name-label.unnamed,
+    .linked-show-group:focus-within .group-name-label.unnamed {
+        opacity: 1;
+    }
+}
+
+.group-selection-active .group-name-label,
+.group-selection-active .group-name-input,
+.group-bundle-selected .group-name-label,
+.group-bundle-selected .group-name-input {
+    display: none;
+}
+
+
+/* Hide group controls during spatial movement */
+
+#favourites-grid:has(.group-dragging) .group-name-label,
+#favourites-grid:has(.group-dragging) .group-name-input,
+#favourites-grid:has(.group-dragging) .edit-group-button,
+#favourites-grid:has(.group-dragging) .unlink-group-button,
+#favourites-grid:has(.group-dragging) .group-drag-handle {
+    opacity: 0;
+    pointer-events: none;
+}
