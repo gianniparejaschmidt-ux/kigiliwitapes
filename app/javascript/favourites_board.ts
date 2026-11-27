@@ -266,22 +266,27 @@ export function updateGroupPosition(
         }
         if (previousPosition && !nextSlugs) {
             const positions = Object.values(board);
+            const vacatedRow = previousPosition.r;
 
-            if (positions.length > 0) {
+            if (
+                positions.length > 0 &&
+                !positions.some(position => position.r === vacatedRow)
+            ) {
                 const firstRow = Math.min(
                     ...positions.map(position => position.r)
                 );
 
-                if (previousPosition.r < firstRow) {
-                    for (const [key, position] of Object.entries(board)) {
-                        board[key] = {
-                            ...position,
-                            r: position.r - firstRow + 1
-                        };
-                    }
+                for (const [key, position] of Object.entries(board)) {
+                    board[key] = {
+                        ...position,
+                        r: vacatedRow < firstRow
+                            ? position.r - firstRow + 1
+                            : position.r - (position.r > vacatedRow ? 1 : 0)
+                    };
                 }
             }
         }
+
         nextLayouts[columns] = board;
     }
 

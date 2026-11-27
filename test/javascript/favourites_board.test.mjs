@@ -469,3 +469,100 @@ test("large board validation and insertion preserve all 250 groups", () => {
     assert.deepEqual(result["249"], pos(1, 1));
     assert.equal(isValidBoard(result, pieces, 2), true);
 });
+
+
+test("splitting removes a vacated internal row", () => {
+    for (const columns of [2, 3, 6]) {
+        const layouts = createEmptyLayouts();
+
+        layouts[columns] = {
+            [A]: pos(1, 1),
+            [B]: pos(2, 1),
+            [C]: pos(3, 1)
+        };
+
+        const next = updateGroupPosition(
+            layouts, ["b1", "b2"], null
+        );
+
+        assert.deepEqual(next[columns], {
+            [A]: pos(1, 1),
+            [C]: pos(2, 1)
+        });
+    }
+});
+
+test("splitting preserves partially occupied rows", () => {
+    const layouts = createEmptyLayouts();
+
+    layouts[6] = {
+        [A]: pos(1, 1),
+        [B]: pos(2, 1),
+        [C]: pos(2, 3),
+        [D]: pos(3, 1)
+    };
+
+    const next = updateGroupPosition(
+        layouts, ["b1", "b2"], null
+    );
+
+    assert.deepEqual(next[6], {
+        [A]: pos(1, 1),
+        [C]: pos(2, 3),
+        [D]: pos(3, 1)
+    });
+});
+
+test("splitting preserves unrelated intentional gaps", () => {
+    const layouts = createEmptyLayouts();
+
+    layouts[6] = {
+        [A]: pos(1, 1),
+        [B]: pos(4, 1),
+        [C]: pos(7, 1)
+    };
+
+    const next = updateGroupPosition(
+        layouts, ["b1", "b2"], null
+    );
+
+    assert.deepEqual(next[6], {
+        [A]: pos(1, 1),
+        [C]: pos(6, 1)
+    });
+});
+
+test("splitting the last group preserves earlier positions", () => {
+    const layouts = createEmptyLayouts();
+
+    layouts[6] = {
+        [A]: pos(1, 1),
+        [B]: pos(3, 1),
+        [C]: pos(5, 1)
+    };
+
+    const next = updateGroupPosition(
+        layouts, ["c1", "c2"], null
+    );
+
+    assert.deepEqual(next[6], {
+        [A]: pos(1, 1),
+        [B]: pos(3, 1)
+    });
+});
+
+test("splitting does not mutate the original layouts", () => {
+    const layouts = createEmptyLayouts();
+
+    layouts[6] = {
+        [A]: pos(1, 1),
+        [B]: pos(2, 1),
+        [C]: pos(3, 1)
+    };
+
+    const original = structuredClone(layouts);
+
+    updateGroupPosition(layouts, ["b1", "b2"], null);
+
+    assert.deepEqual(layouts, original);
+});
