@@ -11,7 +11,12 @@ import {
     updateGroupPosition,
     planBoardInsertion,
     planBoardMove,
-    isValidBoard
+    isValidBoard,
+    anchorKey,
+    planAnchorPlacement,
+    planAnchorRelease,
+    synchronizeSpatialOrder,
+    planGroupFission
 } from "../../app/javascript/favourites_board.ts";
 
 const A = groupKey(["a1", "a2"]);
@@ -565,4 +570,410 @@ test("splitting does not mutate the original layouts", () => {
     updateGroupPosition(layouts, ["b1", "b2"], null);
 
     assert.deepEqual(layouts, original);
+});
+
+
+test("anchor identity is distinct from group identity", () => {
+    assert.notEqual(anchorKey("a1"), A);
+    assert.equal(anchorKey("a1"), anchorKey("a1"));
+});
+
+test("anchoring fills an intentional one-column opening", () => {
+    const layouts = createEmptyLayouts();
+    const three = groupKey(["x1", "x2", "x3"]);
+
+    layouts[6] = {
+        [A]: pos(1, 1),
+        [three]: pos(1, 3)
+    };
+
+    const next = planAnchorPlacement(
+        layouts, "solo", 6, pos(1, 6)
+    );
+
+    assert.ok(next);
+    assert.deepEqual(next[6], {
+        ...layouts[6],
+        [anchorKey("solo")]: pos(1, 6)
+    });
+});
+
+test("anchoring rejects occupied destinations", () => {
+    const layouts = createEmptyLayouts();
+    layouts[6][A] = pos(1, 1);
+
+    assert.equal(planAnchorPlacement(
+        layouts, "solo", 6, pos(1, 2)
+    ), null);
+});
+
+test("anchoring rejects concerts already in a group", () => {
+    const layouts = createEmptyLayouts();
+    layouts[6][A] = pos(1, 1);
+
+    assert.equal(planAnchorPlacement(
+        layouts, "a1", 6, pos(2, 1)
+    ), null);
+});
+
+test("anchoring creates independent responsive positions", () => {
+    const layouts = createEmptyLayouts();
+    layouts[2][A] = pos(3, 1);
+    layouts[3][A] = pos(2, 1);
+
+    const next = planAnchorPlacement(
+        layouts, "solo", 6, pos(4, 5)
+    );
+
+    assert.ok(next);
+    assert.deepEqual(next[2][anchorKey("solo")], pos(4, 1));
+    assert.deepEqual(next[3][anchorKey("solo")], pos(3, 1));
+    assert.deepEqual(next[6][anchorKey("solo")], pos(4, 5));
+});
+
+test("anchoring rejects duplicate independent positions", () => {
+    const layouts = createEmptyLayouts();
+    layouts[6][anchorKey("solo")] = pos(1, 1);
+
+    assert.equal(planAnchorPlacement(
+        layouts, "solo", 6, pos(2, 1)
+    ), null);
+});
+
+test("anchoring does not mutate existing layouts", () => {
+    const layouts = createEmptyLayouts();
+    layouts[6][A] = pos(1, 1);
+    const original = structuredClone(layouts);
+
+    planAnchorPlacement(layouts, "solo", 6, pos(1, 3));
+
+    assert.deepEqual(layouts, original);
+});
+
+test("unanchoring preserves neighbouring groups", () => {
+    const layouts = createEmptyLayouts();
+
+    layouts[6] = {
+        [A]: pos(1, 1),
+        [anchorKey("solo")]: pos(1, 3),
+        [B]: pos(4, 1)
+    };
+
+    const next = planAnchorRelease(layouts, "solo");
+
+    assert.ok(next);
+    assert.deepEqual(next[6], {
+        [A]: pos(1, 1),
+        [B]: pos(4, 1)
+    });
+});
+
+test("unanchoring removes positions across all layouts", () => {
+    const layouts = planAnchorPlacement(
+        createEmptyLayouts(), "solo", 6, pos(2, 3)
+    );
+
+    assert.ok(layouts);
+
+    const next = planAnchorRelease(layouts, "solo");
+
+    assert.deepEqual(next, createEmptyLayouts());
+});
+
+test("unanchoring an unknown concert changes nothing", () => {
+    assert.equal(planAnchorRelease(
+        createEmptyLayouts(), "unknown"
+    ), null);
+});
+
+test("anchored concerts participate in mixed spatial movement", () => {
+    const solo = anchorKey("solo");
+    const board = {
+        [A]: pos(1, 1),
+        [solo]: pos(1, 3)
+    };
+
+    const result = planBoardMove(
+        board,
+        [piece(A), piece(solo, 1)],
+        [moving(solo, 1, 3, 0, 0, 1)],
+        pos(1, 3),
+        pos(1, 5),
+        6
+    );
+
+    assert.ok(result);
+    assert.deepEqual(result.board[solo], pos(1, 5));
+    assert.deepEqual(result.board[A], pos(1, 1));
+});
+
+
+test("fusion consumes anchors and inherits their earliest position", () => {
+    const layouts = createEmptyLayouts();
+
+    layouts[6] = {
+        [A]: pos(1, 1),
+        [anchorKey("solo1")]: pos(2, 2),
+        [anchorKey("solo2")]: pos(4, 1)
+    };
+
+    const next = updateGroupPosition(
+        layouts, null, ["solo1", "solo2"]
+    );
+
+    assert.deepEqual(next[6], {
+        [A]: pos(1, 1),
+        [groupKey(["solo1", "solo2"])]: pos(2, 2)
+    });
+});
+
+test("fusion preserves existing groups when inherited position cannot fit", () => {
+    const layouts = createEmptyLayouts();
+
+    layouts[6] = {
+        [A]: pos(1, 4),
+        [anchorKey("solo1")]: pos(1, 3)
+    };
+
+    const next = updateGroupPosition(
+        layouts, null, ["solo1", "solo2"]
+    );
+
+    assert.deepEqual(next[6], {
+        [A]: pos(1, 4),
+        [groupKey(["solo1", "solo2"])]: pos(2, 1)
+    });
+});
+
+test("membership editing consumes an anchor without losing group position", () => {
+    const layouts = createEmptyLayouts();
+
+    layouts[6] = {
+        [A]: pos(2, 1),
+        [anchorKey("solo")]: pos(4, 1)
+    };
+
+    const next = updateGroupPosition(
+        layouts, ["a1", "a2"], ["a1", "a2", "solo"]
+    );
+
+    assert.deepEqual(next[6], {
+        [groupKey(["a1", "a2", "solo"])]: pos(2, 1)
+    });
+});
+
+
+test("new anchors share rows in narrower responsive layouts", () => {
+    const first = planAnchorPlacement(
+        createEmptyLayouts(), "solo1", 6, pos(1, 5)
+    );
+
+    const second = planAnchorPlacement(
+        first, "solo2", 6, pos(1, 6)
+    );
+
+    for (const columns of [2, 3]) {
+        assert.deepEqual(
+            second[columns][anchorKey("solo1")], pos(1, 1)
+        );
+
+        assert.deepEqual(
+            second[columns][anchorKey("solo2")], pos(1, 2)
+        );
+    }
+});
+
+test("responsive anchor placement wraps when a row is full", () => {
+    let layouts = createEmptyLayouts();
+
+    for (let i = 1; i <= 3; i++) {
+        layouts = planAnchorPlacement(
+            layouts, `solo${i}`, 6, pos(1, i)
+        );
+    }
+
+    assert.deepEqual(
+        layouts[2][anchorKey("solo3")], pos(2, 1)
+    );
+
+    assert.deepEqual(
+        layouts[3][anchorKey("solo3")], pos(1, 3)
+    );
+});
+
+test("responsive anchor placement preserves intentional group gaps", () => {
+    const layouts = createEmptyLayouts();
+    layouts[3][A] = pos(1, 1);
+
+    const next = planAnchorPlacement(
+        layouts, "solo", 6, pos(1, 6)
+    );
+
+    assert.deepEqual(next[3][A], pos(1, 1));
+    assert.deepEqual(
+        next[3][anchorKey("solo")], pos(2, 1)
+    );
+});
+
+
+test("responsive reflow preserves anchors before a large group", () => {
+    const layouts = createEmptyLayouts();
+
+    const group = groupKey(["g1", "g2", "g3", "g4"]);
+    const anchors = [1, 2, 3, 4].map(
+        i => anchorKey(`solo${i}`)
+    );
+
+    layouts[6] = {
+        ...Object.fromEntries(
+            anchors.map((key, i) => [key, pos(1, i + 1)])
+        ),
+        [group]: pos(2, 1)
+    };
+
+    layouts[2] = {
+        [group]: pos(1, 1),
+        ...Object.fromEntries(
+            anchors.map((key, i) => [key, pos(i + 2, 1)])
+        )
+    };
+
+    const next = synchronizeSpatialOrder(layouts, 6);
+
+    assert.deepEqual(next[2], {
+        [anchors[0]]: pos(1, 1),
+        [anchors[1]]: pos(1, 2),
+        [anchors[2]]: pos(2, 1),
+        [anchors[3]]: pos(2, 2),
+        [group]: pos(3, 1)
+    });
+
+    assert.deepEqual(next[6], layouts[6]);
+});
+
+test("compatible responsive arrangements remain unchanged", () => {
+    const layouts = createEmptyLayouts();
+    const solo = anchorKey("solo");
+
+    layouts[6] = {
+        [A]: pos(1, 1),
+        [solo]: pos(1, 6)
+    };
+
+    layouts[2] = {
+        [A]: pos(2, 1),
+        [solo]: pos(5, 2)
+    };
+
+    const next = synchronizeSpatialOrder(layouts, 6);
+
+    assert.deepEqual(next[2], layouts[2]);
+});
+
+test("responsive order synchronisation does not mutate layouts", () => {
+    const layouts = createEmptyLayouts();
+
+    layouts[6] = {
+        [A]: pos(1, 1),
+        [B]: pos(2, 1)
+    };
+
+    layouts[2] = {
+        [B]: pos(1, 1),
+        [A]: pos(2, 1)
+    };
+
+    const original = structuredClone(layouts);
+
+    synchronizeSpatialOrder(layouts, 6);
+
+    assert.deepEqual(layouts, original);
+});
+
+test("responsive synchronisation retains unmatched pieces", () => {
+    const layouts = createEmptyLayouts();
+
+    layouts[6] = {
+        [A]: pos(1, 1)
+    };
+
+    layouts[2] = {
+        [A]: pos(1, 1),
+        [B]: pos(2, 1)
+    };
+
+    const next = synchronizeSpatialOrder(layouts, 6);
+
+    assert.deepEqual(next[2], layouts[2]);
+});
+
+
+test("Fission preserves individual positions within a row", () => {
+    const layouts = createEmptyLayouts();
+
+    const slugs = ["s1", "s2", "s3", "s4"];
+    const group = groupKey(slugs);
+
+    layouts[6] = {
+        [group]: pos(2, 2),
+        [anchorKey("neighbour")]: pos(2, 6)
+    };
+
+    const next = planGroupFission(layouts, slugs);
+
+    assert.ok(next);
+
+    assert.deepEqual(next[6], {
+        [anchorKey("neighbour")]: pos(2, 6),
+        [anchorKey("s1")]: pos(2, 2),
+        [anchorKey("s2")]: pos(2, 3),
+        [anchorKey("s3")]: pos(2, 4),
+        [anchorKey("s4")]: pos(2, 5)
+    });
+});
+
+test("Fission wraps anchors on narrower screens", () => {
+    const layouts = createEmptyLayouts();
+
+    const slugs = ["s1", "s2", "s3", "s4"];
+
+    layouts[2] = {
+        [groupKey(slugs)]: pos(1, 1),
+        [A]: pos(3, 1)
+    };
+
+    const next = planGroupFission(layouts, slugs);
+
+    assert.ok(next);
+
+    assert.deepEqual(next[2], {
+        [A]: pos(4, 1),
+        [anchorKey("s1")]: pos(1, 1),
+        [anchorKey("s2")]: pos(1, 2),
+        [anchorKey("s3")]: pos(2, 1),
+        [anchorKey("s4")]: pos(2, 2)
+    });
+});
+
+test("Fission preserves concert order and does not mutate layouts", () => {
+    const layouts = createEmptyLayouts();
+
+    const slugs = ["s3", "s1", "s2"];
+
+    layouts[6][groupKey(slugs)] = pos(2, 1);
+
+    const original = structuredClone(layouts);
+    const next = planGroupFission(layouts, slugs);
+
+    assert.ok(next);
+    assert.deepEqual(next[6][anchorKey("s3")], pos(2, 1));
+    assert.deepEqual(next[6][anchorKey("s1")], pos(2, 2));
+    assert.deepEqual(next[6][anchorKey("s2")], pos(2, 3));
+    assert.deepEqual(layouts, original);
+});
+
+test("Fission rejects duplicate concert membership", () => {
+    assert.equal(planGroupFission(
+        createEmptyLayouts(), ["solo", "solo"]
+    ), null);
 });

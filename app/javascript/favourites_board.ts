@@ -154,13 +154,17 @@ export function reconcileBoard(
 
     return next;
 }
-const STORAGE_KEY = "gizz-tapes:favourite-board-positions-v1";
-function isValidGroupKey(key: string): boolean {
+const LEGACY_STORAGE_KEY =
+    "gizz-tapes:favourite-board-positions-v1";
+
+const STORAGE_KEY =
+    "gizz-tapes:favourite-board-positions-v2";
+function isValidSpatialKey(key: string): boolean {
     try {
         const slugs = JSON.parse(key);
 
         return Array.isArray(slugs) &&
-            slugs.length >= 2 &&
+            slugs.length >= 1 &&
             slugs.every(slug =>
                 typeof slug === "string" && slug.length > 0
             ) &&
@@ -174,7 +178,8 @@ export function loadBoardLayouts(): BoardLayouts {
     const layouts = createEmptyLayouts();
 
     try {
-        const raw = localStorage.getItem(STORAGE_KEY);
+        const raw = localStorage.getItem(STORAGE_KEY)
+            ?? localStorage.getItem(LEGACY_STORAGE_KEY);
         if (!raw) return layouts;
 
         const saved = JSON.parse(raw);
@@ -186,7 +191,7 @@ export function loadBoardLayouts(): BoardLayouts {
                 || Array.isArray(board)) continue;
 
             for (const [key, value] of Object.entries(board)) {
-                if (!isValidGroupKey(key)) continue;
+                if (!isValidSpatialKey(key)) continue;
                 if (!value || typeof value !== "object") continue;
 
                 const position = value as BoardPosition;
@@ -229,9 +234,21 @@ export function updateGroupPosition(
             ? groupKey(previousSlugs)
             : null;
 
-        const previousPosition = previousKey
-            ? board[previousKey]
-            : undefined;
+        const consumedAnchors = (nextSlugs ?? [])
+            .map(slug => anchorKey(slug))
+            .filter(key => board[key]);
+
+        const inheritedPosition = consumedAnchors
+            .map(key => board[key])
+            .sort((a, b) => a.r - b.r || a.c - b.c)[0];
+
+        const previousPosition = (
+            previousKey ? board[previousKey] : undefined
+        ) ?? inheritedPosition;
+
+        for (const key of consumedAnchors) {
+            delete board[key];
+        }
 
         if (previousKey) {
             delete board[previousKey];
@@ -482,4 +499,301 @@ export function planBoardMove(
         board: nextBoard,
         swapping: targets.length > 0
     };
+}
+
+
+/** A deliberately positioned independent concert. */
+export function anchorKey(slug: string): string {
+    return groupKey([slug]);
+}
+
+/** Derive spatial footprints from canonical piece identities. */
+function spatialPieces(
+    board: Board,
+    columns: BoardColumns
+): BoardPiece[] | null {
+    const pieces: BoardPiece[] = [];
+    const used = new Set<string>();
+
+    for (const key of Object.keys(board)) {
+        let slugs: unknown;
+
+        try {
+            slugs = JSON.parse(key);
+        } catch {
+            return null;
+        }
+
+        if (
+            !Array.isArray(slugs) ||
+            slugs.length === 0 ||
+            slugs.some(slug =>
+                typeof slug !== "string" ||
+                !slug ||
+                used.has(slug)
+            ) ||
+            new Set(slugs).size !== slugs.length ||
+            groupKey(slugs) !== key
+        ) return null;
+
+        slugs.forEach(slug => used.add(slug));
+
+        pieces.push({
+            key,
+            width: Math.min(columns, slugs.length)
+        });
+    }
+
+    return pieces;
+}
+
+/** Plan an initial anchor without displacing existing pieces. */
+export function planAnchorPlacement(
+    layouts: BoardLayouts,
+    slug: string,
+    columns: BoardColumns,
+    position: BoardPosition
+): BoardLayouts | null {
+    if (!slug || !fitsBoard(position, 1, columns)) {
+        return null;
+    }
+
+    const key = anchorKey(slug);
+    const next = createEmptyLayouts();
+
+    for (const width of [2, 3, 6] as const) {
+        const current = layouts[width];
+        const pieces = spatialPieces(current, width);
+
+        if (
+            !pieces ||
+            !isValidBoard(current, pieces, width)
+        ) return null;
+
+        // A concert cannot belong to two spatial pieces.
+        if (pieces.some(piece =>
+            (JSON.parse(piece.key) as string[]).includes(slug)
+        )) return null;
+
+        const lastRow = Math.max(
+            0,
+            ...Object.values(current).map(value => value.r)
+        );
+
+        const trailingPieces = pieces.filter(piece =>
+            current[piece.key].r === lastRow
+        );
+
+        const nextColumn = Math.max(
+            0,
+            ...trailingPieces.map(piece =>
+                current[piece.key].c + piece.width - 1
+            )
+        ) + 1;
+
+        const canExtendAnchorRow =
+            trailingPieces.length > 0 &&
+            trailingPieces.every(piece => piece.width === 1) &&
+            nextColumn <= width;
+
+        const destination = width === columns
+            ? position
+            : canExtendAnchorRow
+                ? { r: lastRow, c: nextColumn }
+                : { r: lastRow + 1, c: 1 };
+
+        const anchor = { key, width: 1 };
+
+        if (!canPlace(
+            current, anchor, destination, width, pieces
+        )) return null;
+
+        next[width] = Object.fromEntries(
+            Object.entries(current).map(
+                ([id, value]) => [id, { ...value }]
+            )
+        );
+
+        next[width][key] = { ...destination };
+
+        if (!isValidBoard(
+            next[width], [...pieces, anchor], width
+        )) return null;
+    }
+
+    return next;
+}
+
+/** Release an anchor and restore automatic positioning. */
+export function planAnchorRelease(
+    layouts: BoardLayouts,
+    slug: string
+): BoardLayouts | null {
+    if (!slug) return null;
+
+    const key = anchorKey(slug);
+
+    if (![2, 3, 6].some(columns =>
+        layouts[columns as BoardColumns][key]
+    )) return null;
+
+    return updateGroupPosition(layouts, [slug], null);
+}
+
+
+export function synchronizeSpatialOrder(
+    layouts: BoardLayouts,
+    sourceColumns: BoardColumns
+): BoardLayouts {
+    const source = layouts[sourceColumns];
+
+    const orderedKeys = (board: Board) =>
+        Object.keys(board).sort((a, b) =>
+            board[a].r - board[b].r ||
+            board[a].c - board[b].c
+        );
+
+    const order = orderedKeys(source);
+    const sourcePieces = spatialPieces(source, sourceColumns);
+
+    if (
+        !sourcePieces ||
+        !isValidBoard(source, sourcePieces, sourceColumns)
+    ) return layouts;
+
+    const next = { ...layouts };
+
+    for (const columns of [2, 3, 6] as const) {
+        if (columns === sourceColumns) continue;
+
+        const current = layouts[columns];
+        const currentOrder = orderedKeys(current);
+
+        // Do not discard pieces when layouts contain
+        // different collections of spatial identities.
+        if (
+            currentOrder.length !== order.length ||
+            order.some(key => !current[key])
+        ) continue;
+
+        // Preserve compatible responsive positions.
+        if (order.every(
+            (key, index) => key === currentOrder[index]
+        )) continue;
+
+        const projected: Board = {};
+
+        let row = 1;
+        let column = 1;
+        let previousSourceRow: number | null = null;
+
+        for (const key of order) {
+            const sourceRow = source[key].r;
+            const width = Math.min(
+                columns,
+                (JSON.parse(key) as string[]).length
+            );
+
+            // Distinct source rows remain distinct.
+            if (
+                previousSourceRow !== null &&
+                sourceRow !== previousSourceRow
+            ) {
+                row += sourceRow - previousSourceRow;
+                column = 1;
+            }
+
+            // Wrap pieces that cannot fit horizontally.
+            if (column + width - 1 > columns) {
+                row++;
+                column = 1;
+            }
+
+            projected[key] = { r: row, c: column };
+
+            column += width;
+            previousSourceRow = sourceRow;
+        }
+
+        const pieces = spatialPieces(projected, columns);
+
+        if (
+            pieces &&
+            isValidBoard(projected, pieces, columns)
+        ) {
+            next[columns] = projected;
+        }
+    }
+
+    return next;
+}
+
+
+export function planGroupFission(
+    layouts: BoardLayouts,
+    slugs: string[]
+): BoardLayouts | null {
+    if (
+        slugs.length < 2 ||
+        slugs.some(slug => !slug) ||
+        new Set(slugs).size !== slugs.length
+    ) return null;
+
+    const key = groupKey(slugs);
+    const next = createEmptyLayouts();
+
+    for (const columns of [2, 3, 6] as const) {
+        const current = layouts[columns];
+        const pieces = spatialPieces(current, columns);
+
+        if (
+            !pieces ||
+            !isValidBoard(current, pieces, columns)
+        ) return null;
+
+        const lastRow = Math.max(
+            0,
+            ...Object.values(current).map(position => position.r)
+        );
+
+        const origin = current[key] ??
+            { r: lastRow + 1, c: 1 };
+
+        const extraRows =
+            Math.ceil(slugs.length / columns) - 1;
+
+        const result: Board = {};
+
+        for (const [id, position] of Object.entries(current)) {
+            if (id === key) continue;
+
+            result[id] = {
+                r: position.r +
+                    (position.r > origin.r ? extraRows : 0),
+                c: position.c
+            };
+        }
+
+        for (const [index, slug] of slugs.entries()) {
+            const id = anchorKey(slug);
+
+            if (result[id]) return null;
+
+            result[id] = {
+                r: origin.r + Math.floor(index / columns),
+                c: origin.c + index % columns
+            };
+        }
+
+        const resultPieces = spatialPieces(result, columns);
+
+        if (
+            !resultPieces ||
+            !isValidBoard(result, resultPieces, columns)
+        ) return null;
+
+        next[columns] = result;
+    }
+
+    return next;
 }

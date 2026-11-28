@@ -2,7 +2,9 @@ import { Controller } from "@hotwired/stimulus"
 import { db, IsSlugFavourited, GetFavouritesListId } from "../db"
 import * as Turbo from "@hotwired/turbo"
 import PlayerController from "./player_controller";
-import { loadBoardLayouts, saveBoardLayouts, groupKey, reconcileBoard, updateGroupPosition, canPlace, planBoardInsertion, planBoardMove } from "../favourites_board";
+import { loadBoardLayouts, saveBoardLayouts, groupKey, reconcileBoard, updateGroupPosition, canPlace, planBoardInsertion, planBoardMove,
+    anchorKey, planAnchorPlacement, planAnchorRelease,
+    synchronizeSpatialOrder, planGroupFission } from "../favourites_board";
 import type { InsertionPiece, Board, BoardColumns, BoardLayouts, BoardPiece, BoardPosition } from "../favourites_board";
 
 const GROUPS_STORAGE_KEY = "gizz-tapes:favourite-pairs"; // Keep existing saved pairs compatible.
@@ -32,6 +34,7 @@ const SORT_OPTIONS = [
     "fusion"
 ];
 interface GroupDragState {
+    initialAnchor: boolean;
     boardPieces: BoardPiece[];
     element: HTMLElement;
     key: string;
@@ -122,7 +125,16 @@ export default class extends Controller {
     private selectedSlugs: string[] = [];
     private editingGroup: string[] | null = null;
     private boardLayouts!: BoardLayouts;
+    private renderedBoardColumns: BoardColumns | null = null;
     private groupDrag: GroupDragState | null = null;
+    private motionCleanup: (() => void) | null = null;
+    private anchorReleaseZone: HTMLElement | null = null;
+    private workingRow: {
+        grid: HTMLElement;
+        template: string;
+        rows: [HTMLElement, string][];
+    } | null = null;
+    private anchorReleaseTarget: HTMLElement | null = null;
     private selectedGroupKeys = new Set<string>();
     private bundleHandle: HTMLButtonElement | null = null;
     private bundleOutline: SVGSVGElement | null = null;
@@ -150,6 +162,8 @@ export default class extends Controller {
         event: DragEvent
     ): MagneticInsertion | null {
         const drag = this.bundleDrag ?? this.groupDrag;
+
+        if (this.groupDrag?.initialAnchor) return null;
 
         if (!drag || drag.columns !== this.boardColumns()) {
             return null;
@@ -352,8 +366,9 @@ export default class extends Controller {
             [target.columns]: target.board
         };
 
-        if (saveBoardLayouts(nextLayouts)) {
-            this.boardLayouts = nextLayouts;
+        if (this.saveSpatialChange(
+            nextLayouts, target.columns
+        )) {
             this.clearGroupSelection();
             this.renderBoardLayout();
         }
@@ -363,7 +378,7 @@ export default class extends Controller {
 
     private boardPieces(columns: BoardColumns): BoardPiece[] {
         return this.sortableItems()
-            .filter(item => item.hasAttribute("data-linked-group"))
+            .filter(item => this.isSpatialPiece(item))
             .map(item => ({
                 key: item.dataset.boardKey!,
                 width: Math.min(
@@ -551,12 +566,21 @@ export default class extends Controller {
             [drag.columns]: target.nextBoard
         };
 
-        if (!saveBoardLayouts(nextLayouts)) return;
+        const displaced = target.swapping
+            ? this.captureDisplacement(
+                target.nextBoard,
+                drag.columns,
+                new Set(drag.pieces.map(piece => piece.key))
+            )
+            : new Map<HTMLElement, DOMRect>();
 
-        this.boardLayouts = nextLayouts;
+        if (!this.saveSpatialChange(
+            nextLayouts, drag.columns
+        )) return;
 
         this.clearGroupSelection();
         this.renderBoardLayout();
+        this.animateDisplacement(displaced);
     }
 
     private findGroupDropTarget(
@@ -624,7 +648,7 @@ export default class extends Controller {
         const posterCount =
             drag.element.querySelectorAll(".featured-item").length;
 
-        const swapPartner = !fits
+        const swapPartner = !fits && !drag.initialAnchor
             ? pieces.find(piece => {
                 if (piece.key === drag.key) return false;
 
@@ -744,6 +768,10 @@ export default class extends Controller {
 
         preview.className = "linked-show-group group-drag-preview";
 
+        if (group.dataset.independentShow) {
+            preview.classList.add("independent-show");
+        }
+
         preview.style.setProperty(
             "--group-colour",
             group.style.getPropertyValue("--group-colour")
@@ -841,7 +869,9 @@ export default class extends Controller {
         }
 
         const group = (event.currentTarget as HTMLElement)
-            .closest<HTMLElement>("[data-linked-group]");
+            .closest<HTMLElement>(
+                "[data-linked-group], [data-independent-show]"
+            );
 
         const key = group?.dataset.boardKey;
         const columns = this.boardColumns();
@@ -849,7 +879,11 @@ export default class extends Controller {
             ? this.boardLayouts[columns][key]
             : undefined;
 
-        if (!group || !key || !position) {
+        const initialAnchor = Boolean(
+            group?.dataset.independentShow && !position
+        );
+
+        if (!group || !key || (!position && !initialAnchor)) {
             event.preventDefault();
             return;
         }
@@ -862,11 +896,12 @@ export default class extends Controller {
         this.resetInsertion();
 
         this.groupDrag = {
+            initialAnchor,
             boardPieces: this.boardPieces(columns),
             element: group,
             key,
             columns,
-            position: { ...position },
+            position: position ? { ...position } : { r: 0, c: 0 },
             width: Math.min(
                 columns,
                 group.querySelectorAll(".featured-item").length
@@ -892,6 +927,21 @@ export default class extends Controller {
             preview.remove();
         });
         group.classList.add("group-dragging");
+
+        if (initialAnchor &&
+            this.groupDrag.boardPieces.length === 0) {
+            this.renderBoardLayout(true);
+        }
+
+        const canRelease = Boolean(
+            !initialAnchor && group.dataset.independentShow
+        );
+
+        this.openWorkingRow();
+
+        if (canRelease) {
+            this.createAnchorReleaseZone();
+        }
     }
 
     endGroupDrag() {
@@ -967,9 +1017,275 @@ export default class extends Controller {
         );
     }
 
+    private animateUnanchoring(
+        element: HTMLElement,
+        redistribute: () => void
+    ) {
+        if (
+            window.matchMedia(
+                "(prefers-reduced-motion: reduce)"
+            ).matches ||
+            !element.isConnected ||
+            this.motionCleanup
+        ) {
+            redistribute();
+            return;
+        }
+
+        element.querySelector(".anchor-gravity")?.remove();
+
+        const perimeter = document.createElement("div");
+
+        perimeter.className =
+            "anchor-gravity anchor-departure";
+
+        perimeter.setAttribute("aria-hidden", "true");
+
+        element.appendChild(perimeter);
+
+        const grid = this.gridTarget;
+        const wasInert = this.element.hasAttribute("inert");
+
+        this.element.setAttribute("inert", "");
+
+        const animation = perimeter.animate([
+            {
+                boxShadow:
+                    "0 0 0 2px #a2a8b0, " +
+                    "0 0 0 0 transparent",
+                offset: 0
+            },
+            {
+                boxShadow:
+                    "0 0 0 5px rgba(162,168,176,0.50), " +
+                    "0 0 8px 4px rgba(162,168,176,0.20)",
+                offset: 0.40
+            },
+            {
+                boxShadow:
+                    "0 0 0 10px transparent, " +
+                    "0 0 14px 12px transparent",
+                offset: 1
+            }
+        ], {
+            duration: 450,
+            easing: "ease-out",
+            fill: "both"
+        });
+
+        const cleanup = () => {
+            this.motionCleanup = null;
+
+            animation.cancel();
+            perimeter.remove();
+
+            if (!wasInert) {
+                this.element.removeAttribute("inert");
+            }
+        };
+
+        this.motionCleanup = cleanup;
+
+        const complete = () => {
+            if (this.motionCleanup !== cleanup) return;
+
+            try {
+                if (
+                    grid.isConnected &&
+                    this.hasGridTarget &&
+                    this.gridTarget === grid
+                ) {
+                    redistribute();
+                }
+            } finally {
+                cleanup();
+            }
+        };
+
+        animation.finished.then(complete, complete);
+    }
+
+    private animateAnchorArrival(
+        element: HTMLElement,
+        frames: Keyframe[],
+        duration: number
+    ) {
+        if (window.matchMedia(
+            "(prefers-reduced-motion: reduce)"
+        ).matches) return;
+
+        if (!element.isConnected ||
+            !element.hasAttribute("data-anchored")) return;
+
+        element.querySelector(".anchor-gravity")?.remove();
+
+        const perimeter = document.createElement("div");
+
+        perimeter.className =
+            "anchor-gravity anchor-arrival";
+
+        perimeter.setAttribute("aria-hidden", "true");
+
+        element.appendChild(perimeter);
+
+        const animation = perimeter.animate(frames, {
+            duration,
+            easing: "cubic-bezier(0.2, 0.7, 0.3, 1)",
+            fill: "both"
+        });
+
+        const cleanup = () => perimeter.remove();
+
+        animation.finished.then(cleanup, cleanup);
+    }
+
+    private animateAnchoring(element: HTMLElement) {
+        this.animateAnchorArrival(element, [
+            {
+                boxShadow:
+                    "0 0 0 8px rgba(162,168,176,0.15), " +
+                    "0 0 14px 12px rgba(162,168,176,0.20)",
+                offset: 0
+            },
+            {
+                boxShadow:
+                    "0 0 0 3px rgba(162,168,176,0.90), " +
+                    "0 0 8px 3px rgba(162,168,176,0.30)",
+                offset: 0.55
+            },
+            {
+                boxShadow:
+                    "0 0 0 2px #a2a8b0, " +
+                    "0 0 0 0 transparent",
+                offset: 1
+            }
+        ], 650);
+    }
+
+    private openWorkingRow() {
+        this.closeWorkingRow();
+
+        const grid = this.gridTarget;
+        const columns = this.boardColumns();
+
+        const lastRow = Math.max(
+            0,
+            ...Object.values(
+                this.boardLayouts[columns]
+            ).map(position => position.r)
+        );
+
+        const loose = this.sortableItems().filter(
+            item => !this.isSpatialPiece(item)
+        );
+
+        this.workingRow = {
+            grid,
+            template: grid.style.gridTemplateRows,
+            rows: loose.map(item => [
+                item, item.style.gridRow
+            ])
+        };
+
+        const temporaryRows = " minmax(64px, auto)";
+
+        grid.style.gridTemplateRows = (
+            this.workingRow.template + temporaryRows
+        ).trim();
+
+        loose.forEach((item, index) => {
+            item.style.gridRow = String(
+                lastRow + 2 +
+                Math.floor(index / columns)
+            );
+
+            item.style.gridColumn =
+                String(index % columns + 1);
+        });
+    }
+
+    private closeWorkingRow() {
+        const working = this.workingRow;
+        if (!working) return;
+
+        working.grid.style.gridTemplateRows =
+            working.template;
+
+        for (const [item, row] of working.rows) {
+            item.style.gridRow = row;
+        }
+
+        this.workingRow = null;
+    }
+
+    private createAnchorReleaseZone() {
+        if (!this.groupDrag) return;
+
+        const zone = document.createElement("div");
+
+        zone.className = "anchor-release-zone";
+        zone.textContent = "Drop here to unanchor";
+
+        this.gridTarget.appendChild(zone);
+        this.anchorReleaseZone = zone;
+    }
+
+    private findAnchorReleaseTarget(
+        event: DragEvent
+    ): HTMLElement | null {
+        const drag = this.groupDrag;
+
+        if (
+            !drag ||
+            drag.initialAnchor ||
+            !drag.element.dataset.independentShow ||
+            !(event.target instanceof Element)
+        ) return null;
+
+        const target = event.target.closest<HTMLElement>(
+            ".anchor-release-zone"
+        );
+
+        return target && this.gridTarget.contains(target)
+            ? target
+            : null;
+    }
+
+    private clearAnchorReleaseTarget() {
+        this.anchorReleaseTarget?.classList.remove(
+            "anchor-release-target"
+        );
+        this.anchorReleaseTarget = null;
+    }
+
     groupDrop(event: DragEvent) {
         if (this.groupDrag || this.bundleDrag) {
             this.suppressDropHover(event);
+        }
+
+        const release = this.findAnchorReleaseTarget(event);
+
+        if (release && this.groupDrag) {
+            event.preventDefault();
+
+            const released = this.groupDrag.element;
+            const slug = released.dataset.independentShow!;
+
+            const next = planAnchorRelease(
+                this.boardLayouts, slug
+            );
+
+            this.cancelGroupDrag();
+
+            if (next && saveBoardLayouts(next)) {
+                this.boardLayouts = next;
+                this.animateUnanchoring(
+                    released,
+                    () => this.applyFavouriteSort()
+                );
+            }
+
+            return;
         }
 
         if (
@@ -992,6 +1308,26 @@ export default class extends Controller {
         this.cancelGroupDrag();
 
         if (!target?.valid) return;
+
+        if (drag.initialAnchor) {
+            const slug = drag.element.dataset.independentShow!;
+
+            const next = planAnchorPlacement(
+                this.boardLayouts,
+                slug,
+                drag.columns,
+                target.position
+            );
+
+            if (next && this.saveSpatialChange(
+                next, drag.columns
+            )) {
+                this.renderBoardLayout();
+                this.animateAnchoring(drag.element);
+            }
+
+            return;
+        }
 
         const board = this.boardLayouts[drag.columns];
         const current = board[drag.key];
@@ -1029,10 +1365,20 @@ export default class extends Controller {
             [drag.columns]: nextBoard
         };
 
-        if (!saveBoardLayouts(nextLayouts)) return;
+        const displaced = target.swapKey
+            ? this.captureDisplacement(
+                nextBoard,
+                drag.columns,
+                new Set([drag.key])
+            )
+            : new Map<HTMLElement, DOMRect>();
 
-        this.boardLayouts = nextLayouts;
+        if (!this.saveSpatialChange(
+            nextLayouts, drag.columns
+        )) return;
+
         this.renderBoardLayout();
+        this.animateDisplacement(displaced);
     }
     groupDragLeave(event: DragEvent) {
         if (!this.groupDrag && !this.bundleDrag) return;
@@ -1048,6 +1394,25 @@ export default class extends Controller {
         this.clearGroupDropIndicator();
     }
     groupDragOver(event: DragEvent) {
+        this.clearAnchorReleaseTarget();
+
+        const release = this.findAnchorReleaseTarget(event);
+
+        if (release) {
+            event.preventDefault();
+            this.clearInsertionIndicator();
+            this.clearGroupDropIndicator();
+
+            release.classList.add("anchor-release-target");
+            this.anchorReleaseTarget = release;
+
+            if (event.dataTransfer) {
+                event.dataTransfer.dropEffect = "move";
+            }
+
+            return;
+        }
+
         if (
             (this.groupDrag || this.bundleDrag) &&
             this.handleInsertionOver(event)
@@ -1133,14 +1498,32 @@ export default class extends Controller {
     }
 
     private cancelGroupDrag() {
+        this.clearAnchorReleaseTarget();
+        this.anchorReleaseZone?.remove();
+        this.anchorReleaseZone = null;
+
         this.resetInsertion();
         this.clearGroupDropIndicator();
 
         if (!this.groupDrag) return;
 
-        this.groupDrag.element.classList.remove("group-dragging");
-        this.groupDrag.preview?.remove();
+        const drag = this.groupDrag;
+
+        this.closeWorkingRow();
+
+        drag.element.classList.remove("group-dragging");
+        drag.preview?.remove();
         this.groupDrag = null;
+
+        if (
+            drag.initialAnchor &&
+            drag.boardPieces.length === 0 &&
+            this.hasGridTarget &&
+            this.isIntertwined() &&
+            this.gridTarget.contains(drag.element)
+        ) {
+            this.renderBoardLayout();
+        }
     }
     private handleBoardResize = () => {
         if (this.boardResizeFrame !== null) return;
@@ -1148,15 +1531,34 @@ export default class extends Controller {
         this.boardResizeFrame = requestAnimationFrame(() => {
             this.boardResizeFrame = null;
 
+            if (this.motionCleanup) return;
+
             if (!this.hasGridTarget || !this.isIntertwined()) return;
             if (this.gridTarget.hasAttribute("busy")) return;
         this.cancelGroupDrag();
             this.cancelGroupMarquee();
             this.clearGroupSelection();
+
+            const previous = this.renderedBoardColumns;
+
+            if (
+                previous !== null &&
+                previous !== this.boardColumns()
+            ) {
+                const next = synchronizeSpatialOrder(
+                    this.boardLayouts, previous
+                );
+
+                if (saveBoardLayouts(next)) {
+                    this.boardLayouts = next;
+                }
+            }
+
             this.renderBoardLayout();
         });
     };
     disconnect() {
+        this.motionCleanup?.();
         this.clearDropHover();
         this.cancelGroupMarquee();
         this.clearGroupSelection();
@@ -1319,6 +1721,34 @@ export default class extends Controller {
             );
 
             this.saveGroups(validGroups);
+
+            let cleanedLayouts = this.boardLayouts;
+
+            const spatialKeys = new Set(
+                ([2, 3, 6] as const).flatMap(columns =>
+                    Object.keys(cleanedLayouts[columns])
+                )
+            );
+
+            for (const key of spatialKeys) {
+                const slugs = JSON.parse(key) as string[];
+
+                if (
+                    slugs.length === 1 &&
+                    !favouriteSet.has(slugs[0])
+                ) {
+                    cleanedLayouts = planAnchorRelease(
+                        cleanedLayouts, slugs[0]
+                    ) ?? cleanedLayouts;
+                }
+            }
+
+            if (
+                cleanedLayouts !== this.boardLayouts &&
+                saveBoardLayouts(cleanedLayouts)
+            ) {
+                this.boardLayouts = cleanedLayouts;
+            }
 
             if (favouritesSlugs.length === 0) {
                 this.gridTarget.innerHTML = `<p class="mb-5">No favourites yet!</p>`;
@@ -1660,6 +2090,20 @@ export default class extends Controller {
         input.select();
     }
 
+    private saveSpatialChange(
+        layouts: BoardLayouts,
+        columns: BoardColumns
+    ): boolean {
+        const next = synchronizeSpatialOrder(
+            layouts, columns
+        );
+
+        if (!saveBoardLayouts(next)) return false;
+
+        this.boardLayouts = next;
+        return true;
+    }
+
     private updateBoardGroup(
         previousSlugs: string[] | null,
         nextSlugs: string[] | null
@@ -1672,21 +2116,23 @@ export default class extends Controller {
             nextSlugs
         );
 
-        if (saveBoardLayouts(nextLayouts)) {
-            this.boardLayouts = nextLayouts;
-        }
+        this.saveSpatialChange(
+            nextLayouts, this.boardColumns()
+        );
     }
-private renderBoardLayout() {
+private renderBoardLayout(force = false) {
         this.resetBoardLayout();
+        this.refreshIndependentStates();
 
         const columns = this.boardColumns();
+        this.renderedBoardColumns = columns;
         const items = this.sortableItems();
 
         const groups = items.filter(item =>
-            item.hasAttribute("data-linked-group")
+            this.isSpatialPiece(item)
         );
 
-        if (groups.length === 0) return;
+        if (groups.length === 0 && !force) return;
 
         const pieces: BoardPiece[] = groups.map(group => ({
             key: group.dataset.boardKey!,
@@ -1736,18 +2182,20 @@ private renderBoardLayout() {
         );
 
         this.gridTarget.style.gridTemplateRows =
-            `repeat(${lastRow + 1}, minmax(${rowHeight}px, auto))`;
+            lastRow > 0
+                ? `repeat(${lastRow}, minmax(${rowHeight}px, auto))`
+                : "";
 
         this.gridTarget.style.rowGap = "36px";
 
 
         const unfused = items.filter(item =>
-            !item.hasAttribute("data-linked-group")
+            !this.isSpatialPiece(item)
         );
 
         unfused.forEach((item, index) => {
             item.style.gridRow =
-                String(lastRow + 2 + Math.floor(index / columns));
+                String(lastRow + 1 + Math.floor(index / columns));
 
             item.style.gridColumn =
                 String(index % columns + 1);
@@ -1765,6 +2213,79 @@ private renderBoardLayout() {
             ...unfused
         ]);
     }
+    private captureDisplacement(
+        nextBoard: Board,
+        columns: BoardColumns,
+        movingKeys: Set<string>
+    ): Map<HTMLElement, DOMRect> {
+        const origins = new Map<HTMLElement, DOMRect>();
+
+        if (window.matchMedia(
+            "(prefers-reduced-motion: reduce)"
+        ).matches) return origins;
+
+        const current = this.boardLayouts[columns];
+
+        for (const item of this.sortableItems()) {
+            const key = item.dataset.boardKey;
+
+            if (!key || movingKeys.has(key)) continue;
+
+            const before = current[key];
+            const after = nextBoard[key];
+
+            if (!before || !after) continue;
+
+            if (
+                before.r === after.r &&
+                before.c === after.c
+            ) continue;
+
+            origins.set(item, item.getBoundingClientRect());
+        }
+
+        return origins;
+    }
+
+    private animateDisplacement(
+        origins: Map<HTMLElement, DOMRect>
+    ) {
+        for (const [item, origin] of origins) {
+            if (!item.isConnected) continue;
+
+            for (const animation of item.getAnimations()) {
+                if (animation.id === "favourites-displacement") {
+                    animation.cancel();
+                }
+            }
+
+            const destination = item.getBoundingClientRect();
+
+            const x = origin.left - destination.left;
+            const y = origin.top - destination.top;
+
+            if (
+                Math.abs(x) < 1 &&
+                Math.abs(y) < 1
+            ) continue;
+
+            const animation = item.animate([
+                {
+                    transform: `translate(${x}px, ${y}px)`
+                },
+                {
+                    transform: "translate(0px, 0px)"
+                }
+            ], {
+                duration: 180,
+                easing: "cubic-bezier(0.2, 0.7, 0.3, 1)",
+                fill: "none"
+            });
+
+            animation.id = "favourites-displacement";
+        }
+    }
+
     private syncBoardDOMOrder(items: HTMLElement[]) {
         const focused = document.activeElement;
 
@@ -1772,7 +2293,8 @@ private renderBoardLayout() {
             element instanceof HTMLElement &&
             (
                 element.matches(".featured-item") ||
-                element.hasAttribute("data-linked-group")
+                element.hasAttribute("data-linked-group") ||
+                element.hasAttribute("data-independent-show")
             );
 
         let current = this.gridTarget.firstElementChild;
@@ -1819,7 +2341,9 @@ private renderBoardLayout() {
         this.cancelGroupDrag();
         this.resetBoardLayout();
 
-        this.gridTarget.querySelectorAll<HTMLElement>('[data-linked-group]').forEach(group => {
+        this.gridTarget.querySelectorAll<HTMLElement>(
+            '[data-linked-group], [data-independent-show]'
+        ).forEach(group => {
             const cards = Array.from(group.querySelectorAll<HTMLElement>('.featured-item'));
             group.replaceWith(...cards);
         });
@@ -1978,6 +2502,58 @@ private renderBoardLayout() {
             this.sortSelectTarget.value === "fusion";
     }
 
+    private createSpatialHandle(
+        independent = false
+    ): HTMLButtonElement {
+            const handle = document.createElement("button");
+            handle.type = "button";
+            handle.className = "group-drag-handle";
+            handle.draggable = true;
+            handle.dataset.action =
+                "dragstart->favourites#startGroupDrag dragend->favourites#endGroupDrag";
+            handle.setAttribute(
+                "aria-label",
+                independent ? "Move this concert" : "Move this group"
+            );
+            handle.title = independent ? "Move concert" : "Move group";
+
+            handle.innerHTML = `
+                <svg width="20" height="10" viewBox="0 0 20 10"
+                     fill="currentColor" aria-hidden="true">
+                    <circle cx="3" cy="3" r="1.3"/>
+                    <circle cx="8" cy="3" r="1.3"/>
+                    <circle cx="12" cy="3" r="1.3"/>
+                    <circle cx="17" cy="3" r="1.3"/>
+                    <circle cx="3" cy="7" r="1.3"/>
+                    <circle cx="8" cy="7" r="1.3"/>
+                    <circle cx="12" cy="7" r="1.3"/>
+                    <circle cx="17" cy="7" r="1.3"/>
+                </svg>
+            `;
+
+
+        return handle;
+    }
+
+    private isSpatialPiece(item: HTMLElement): boolean {
+        return item.hasAttribute("data-linked-group") ||
+            item.hasAttribute("data-anchored");
+    }
+
+    private refreshIndependentStates() {
+        for (const item of this.sortableItems()) {
+            if (!item.dataset.independentShow) continue;
+
+            const key = item.dataset.boardKey!;
+
+            const anchored = ([2, 3, 6] as const).some(
+                columns => Boolean(this.boardLayouts[columns][key])
+            );
+
+            item.toggleAttribute("data-anchored", anchored);
+        }
+    }
+
     private renderLinkedGroups() {
         this.closeContextualGroupEditing();
         this.unwrapLinkedGroups();
@@ -2029,36 +2605,42 @@ private renderBoardLayout() {
             editShows.dataset.action = "click->favourites#editGroup";
 
 
-                        const handle = document.createElement("button");
-            handle.type = "button";
-            handle.className = "group-drag-handle";
-            handle.draggable = true;
-            handle.dataset.action =
-                "dragstart->favourites#startGroupDrag dragend->favourites#endGroupDrag";
-            handle.setAttribute("aria-label", "Move this group");
-            handle.title = "Move group";
-
-            handle.innerHTML = `
-                <svg width="20" height="10" viewBox="0 0 20 10"
-                     fill="currentColor" aria-hidden="true">
-                    <circle cx="3" cy="3" r="1.3"/>
-                    <circle cx="8" cy="3" r="1.3"/>
-                    <circle cx="12" cy="3" r="1.3"/>
-                    <circle cx="17" cy="3" r="1.3"/>
-                    <circle cx="3" cy="7" r="1.3"/>
-                    <circle cx="8" cy="7" r="1.3"/>
-                    <circle cx="12" cy="7" r="1.3"/>
-                    <circle cx="17" cy="7" r="1.3"/>
-                </svg>
-            `;
+                        const handle = this.createSpatialHandle();
 
             const name = this.createGroupNameLabel(slugs);
 
             group.append(name, handle, edit, ...shows, unlink, editShows);
             this.gridTarget.appendChild(group);
         }
+
+        for (const card of cards) {
+            if (card.parentElement !== this.gridTarget) continue;
+
+            const slug = this.showSlug(card);
+            const wrapper = document.createElement("div");
+
+            wrapper.className =
+                "linked-show-group independent-show";
+
+            wrapper.dataset.independentShow = slug;
+            wrapper.dataset.boardKey = anchorKey(slug);
+            wrapper.dataset.sortDate = card.dataset.sortDate;
+
+            wrapper.style.setProperty("--group-size", "1");
+            wrapper.style.setProperty("--group-colour", "#a2a8b0");
+
+            card.replaceWith(wrapper);
+
+            wrapper.append(
+                this.createSpatialHandle(true),
+                card
+            );
+        }
+
+        this.refreshIndependentStates();
     }
     handleFusionKey(event: KeyboardEvent) {
+        if (this.motionCleanup) return;
         if (event.key === "Escape") {
             const activeGroup = this.hasGridTarget
                 ? this.gridTarget.querySelector<HTMLElement>(
@@ -2207,7 +2789,9 @@ private renderBoardLayout() {
         const target = event.target;
         if (!(target instanceof Element)) return false;
 
-        const group = target.closest<HTMLElement>("[data-linked-group]");
+        const group = target.closest<HTMLElement>(
+            "[data-linked-group], [data-anchored]"
+        );
         const key = group?.dataset.boardKey;
 
         if (!key) return false;
@@ -2369,6 +2953,7 @@ private renderBoardLayout() {
             return ring;
         };
 
+        createRing("fusion-energy-settle");
         createRing("fusion-energy-halo");
 
         const configureTrail = (
@@ -2510,7 +3095,7 @@ private renderBoardLayout() {
         event.preventDefault();
         event.stopPropagation();
 
-        if (this.linking) return;
+        if (this.linking || this.motionCleanup) return;
         const group = (event.target as HTMLElement).closest<HTMLElement>('[data-linked-group]');
         if (!group) return;
 
@@ -2519,16 +3104,54 @@ private renderBoardLayout() {
             .getPropertyValue("--group-colour").trim()
             || "#18b182";
         const slugs = Array.from(group.querySelectorAll<HTMLElement>('.featured-item')).map(card => this.showSlug(card));
+        const nextLayouts = planGroupFission(
+            this.boardLayouts, slugs
+        );
+
+        if (!nextLayouts) {
+            this.linkStatusTarget.textContent =
+                "Unable to preserve this group's positions.";
+            return;
+        }
+
+        const previousLayouts = this.boardLayouts;
+
+        if (!this.saveSpatialChange(
+            nextLayouts, this.boardColumns()
+        )) return;
+
+        try {
+            this.saveGroups(
+                this.savedGroups().filter(
+                    saved => groupKey(saved) !== groupKey(slugs)
+                )
+            );
+        } catch (error) {
+            saveBoardLayouts(previousLayouts);
+            this.boardLayouts = previousLayouts;
+
+            this.linkStatusTarget.textContent =
+                "Unable to split this group.";
+
+            console.warn("Unable to save Fission", error);
+            return;
+        }
+
         const colours = this.savedGroupColours();
 
         delete colours[this.groupColourKey(slugs)];
 
-        localStorage.setItem(
-            GROUP_COLOURS_STORAGE_KEY,
-            JSON.stringify(colours)
-        );
-        this.saveGroups(this.savedGroups().filter(saved => !saved.every(slug => slugs.includes(slug))));
-        this.updateBoardGroup(slugs, null);
+        try {
+            localStorage.setItem(
+                GROUP_COLOURS_STORAGE_KEY,
+                JSON.stringify(colours)
+            );
+        } catch (error) {
+            console.warn("Unable to remove group colour", error);
+        }
+
+        this.transferGroupName(slugs, null);
+
         const redistribute = () => {
             this.renderLinkedGroups();
             this.applyFavouriteSort();
@@ -2548,26 +3171,36 @@ private renderBoardLayout() {
         group.style.boxShadow = "none";
 
         const wasInert = this.element.hasAttribute("inert");
+        const grid = this.gridTarget;
 
         this.element.setAttribute("inert", "");
-        this.gridTarget.setAttribute("busy", "");
 
         this.animateFission(fissionRect, fissionColour);
 
-        window.setTimeout(() => {
+        const timer = window.setTimeout(() => {
             try {
-                if (this.gridTarget.isConnected) {
+                if (
+                    grid.isConnected &&
+                    this.hasGridTarget &&
+                    this.gridTarget === grid
+                ) {
                     redistribute();
                     this.animateReleasedShows(slugs, fissionColour);
                 }
             } finally {
-                this.gridTarget.removeAttribute("busy");
-
-                if (!wasInert) {
-                    this.element.removeAttribute("inert");
-                }
+                this.motionCleanup?.();
             }
         }, 350);
+
+        this.motionCleanup = () => {
+            window.clearTimeout(timer);
+
+            if (!wasInert) {
+                this.element.removeAttribute("inert");
+            }
+
+            this.motionCleanup = null;
+        };
     }
 
 
@@ -2598,24 +3231,32 @@ private renderBoardLayout() {
                 rect.top > window.innerHeight
             ) continue;
 
-            const poster = card.querySelector("img");
+            const anchor = card.closest<HTMLElement>(
+                "[data-anchored]"
+            );
 
-            if (!poster) continue;
+            if (!anchor) continue;
 
-            poster.animate([
+            this.animateAnchorArrival(anchor, [
                 {
-                    boxShadow: `0 0 0 2px ${colour}, 0 0 12px ${colour}`
+                    boxShadow:
+                        `0 0 0 2px ${colour}, ` +
+                        `0 0 12px 3px ${colour}`,
+                    offset: 0
                 },
                 {
-                    boxShadow: `0 0 0 1px ${colour}`
+                    boxShadow:
+                        "0 0 0 3px #b7bcc3, " +
+                        "0 0 6px rgba(162,168,176,0.30)",
+                    offset: 0.55
                 },
                 {
-                    boxShadow: "0 0 0 0 transparent"
+                    boxShadow:
+                        "0 0 0 2px #a2a8b0, " +
+                        "0 0 0 0 transparent",
+                    offset: 1
                 }
-            ], {
-                duration: 450,
-                easing: "ease-out"
-            });
+            ], 450);
         }
     }
 
@@ -2846,7 +3487,7 @@ private renderBoardLayout() {
 
         const intersectsUnselected = this.sortableItems().some(item => {
             if (selected.has(item)) return false;
-            if (!item.hasAttribute("data-linked-group")) return false;
+            if (!this.isSpatialPiece(item)) return false;
 
             const rect = item.getBoundingClientRect();
 
@@ -3124,6 +3765,8 @@ private renderBoardLayout() {
             piece.element.classList.add("group-dragging");
         }
 
+        this.openWorkingRow();
+
         requestAnimationFrame(() => {
             preview.remove();
 
@@ -3140,6 +3783,8 @@ private renderBoardLayout() {
     private cancelBundleDrag() {
         const drag = this.bundleDrag;
         if (!drag) return;
+
+        this.closeWorkingRow();
 
         this.resetInsertion();
 
@@ -3278,7 +3923,7 @@ private renderBoardLayout() {
         for (const item of this.sortableItems()) {
             const key = item.dataset.boardKey;
 
-            if (!item.hasAttribute("data-linked-group") || !key) {
+            if (!this.isSpatialPiece(item) || !key) {
                 continue;
             }
 
@@ -3348,7 +3993,8 @@ private renderBoardLayout() {
         if (
             target instanceof Element &&
             target.closest(
-                "#favourites-grid [data-linked-group], .group-bundle-handle"
+                "#favourites-grid [data-linked-group], " +
+                "#favourites-grid [data-anchored], .group-bundle-handle"
             )
         ) return;
 
@@ -3368,7 +4014,8 @@ private renderBoardLayout() {
     }
 
     private canSelectGroups(): boolean {
-        return this.hasGridTarget &&
+        return !this.motionCleanup &&
+            this.hasGridTarget &&
             this.isIntertwined() &&
             !this.linking &&
             !this.groupDrag &&
@@ -3380,7 +4027,7 @@ private renderBoardLayout() {
         return this.sortableItems().filter(item => {
             const key = item.dataset.boardKey;
 
-            return item.hasAttribute("data-linked-group") &&
+            return this.isSpatialPiece(item) &&
                 key !== undefined &&
                 this.selectedGroupKeys.has(key);
         });
@@ -3389,7 +4036,11 @@ private renderBoardLayout() {
     private sortableItems(): HTMLElement[] {
         return Array.from(this.gridTarget.children).filter((element): element is HTMLElement =>
             element instanceof HTMLElement &&
-            (element.matches('.featured-item') || element.hasAttribute('data-linked-group'))
+            (
+                element.matches('.featured-item') ||
+                element.hasAttribute('data-linked-group') ||
+                element.hasAttribute('data-independent-show')
+            )
         );
     }
 
