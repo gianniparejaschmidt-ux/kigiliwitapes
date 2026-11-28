@@ -796,7 +796,7 @@
 
 .linked-show-group.contextual-group-editing {
     box-shadow: 0 0 0 5px var(--favourites-change-colour);
-    animation: group-editing-breathe 3s ease-in-out infinite;
+    animation: group-editing-breathe 2.4s ease-in-out infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -888,22 +888,30 @@
 @keyframes fusion-circulation {
     0% {
         opacity: 0;
-        stroke-dashoffset: 0;
+        stroke-dashoffset: var(--fusion-offset, 0px);
     }
 
     12% {
-        opacity: 1;
-        stroke-dashoffset: 0;
+        opacity: var(--fusion-strength, 1);
+        stroke-dashoffset: var(--fusion-offset, 0px);
+    }
+
+    60% {
+        opacity: var(--fusion-strength, 1);
+        stroke-dashoffset:
+            calc(var(--fusion-offset, 0px) - 77px);
     }
 
     74% {
-        opacity: 1;
-        stroke-dashoffset: -100;
+        opacity: calc(var(--fusion-strength, 1) * 0.75);
+        stroke-dashoffset:
+            calc(var(--fusion-offset, 0px) - 100px);
     }
 
     100% {
         opacity: 0;
-        stroke-dashoffset: -100;
+        stroke-dashoffset:
+            calc(var(--fusion-offset, 0px) - 112px);
     }
 }
 
@@ -998,4 +1006,31 @@
     .group-name-input {
         width: 16ch;
     }
+}
+
+
+/* Concert availability during membership selection */
+
+.group-selection-active .featured-item {
+    transition: opacity 150ms ease;
+}
+
+.group-selection-active .featured-item.fusion-unavailable {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .group-selection-active .featured-item {
+        transition: none;
+    }
+}
+
+
+/* Keep the Fusion energy path unobstructed. */
+
+.linked-show-group:has(> .fusion-energy) > .group-drag-handle {
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
 }

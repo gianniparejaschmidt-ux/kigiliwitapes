@@ -19,12 +19,12 @@
         <div class="card-body py-5 px-3">
             <div class="flex flex-wrap items-center justify-between gap-3 mb-4 px-2">
                 <label class="flex items-center gap-2 text-sm">
-                    <span>Sort by</span>
+                    <span>View</span>
                     <select
                         data-favourites-target="sortSelect"
                         data-action="change->favourites#sortFavourites"
                         class="select select-bordered select-sm"
-                        aria-label="Sort favourite shows"
+                        aria-label="View favourite shows"
                     >
                         <option value="date-desc">Newest show</option>
                         <option value="date-asc">Oldest show</option>
@@ -35,6 +35,11 @@
                         <option value="fusion">Intertwined</option>
                     </select>
                 </label>
+
+                <p data-favourites-target="linkStatus"
+                   class="order-last basis-full min-h-[2.5rem] text-sm text-center lg:order-none lg:flex-1 lg:min-w-0 lg:min-h-0 lg:truncate"
+                   role="status"
+                   aria-live="polite"></p>
 
 <button
     type="button"
@@ -88,7 +93,7 @@
                 </button>
 
             </div>
-            <p data-favourites-target="linkStatus" class="text-sm px-2 mb-2" role="status" aria-live="polite"></p>
+
 
             <div data-action="mousedown->favourites#startGroupMarquee contextmenu->favourites#suppressGroupContextMenu dragstart->favourites#guardMarqueeDrag click->favourites#selectShow dragover->favourites#groupDragOver dragleave->favourites#groupDragLeave drop->favourites#groupDrop" busy data-favourites-target="grid" id="favourites-grid" class="responsive-grid">
 

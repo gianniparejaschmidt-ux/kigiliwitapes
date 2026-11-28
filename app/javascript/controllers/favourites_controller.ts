@@ -1581,6 +1581,16 @@ export default class extends Controller {
 
             if (activeGroup && !activeGroup.contains(label)) return;
 
+            const group = label.closest<HTMLElement>(
+                "[data-linked-group]"
+            );
+
+            if (!group) return;
+
+            if (!activeGroup) {
+                this.toggleContextualGroupEditing(group);
+            }
+
             this.clearGroupSelection();
             this.editGroupName(label, slugs, update);
         });
@@ -2360,8 +2370,37 @@ private renderBoardLayout() {
         };
 
         createRing("fusion-energy-halo");
-        createRing("fusion-energy-trail");
+
+        const configureTrail = (
+            ring: SVGRectElement,
+            length: number,
+            strength: number
+        ) => {
+            ring.style.strokeDasharray =
+                `${length} ${100 - length}`;
+
+            ring.style.setProperty(
+                "--fusion-offset",
+                `${-(26 - length)}px`
+            );
+
+            ring.style.setProperty(
+                "--fusion-strength",
+                String(strength)
+            );
+        };
+
+        for (const [length, strength] of [
+            [26, 0.18],
+            [18, 0.40],
+            [11, 0.75]
+        ]) {
+            const trail = createRing("fusion-energy-trail");
+            configureTrail(trail, length, strength);
+        }
+
         const impulse = createRing("fusion-energy-impulse");
+        configureTrail(impulse, 8, 1);
 
         group.appendChild(svg);
 
@@ -2727,11 +2766,41 @@ private renderBoardLayout() {
                 : `Select 2 or more shows (${this.selectedSlugs.length} selected), then click Fuse.`
             : "";
 
-        this.gridTarget.querySelectorAll<HTMLElement>('.featured-item').forEach(card => {
-            const selected = this.selectedSlugs.includes(this.showSlug(card));
+        const unavailableSlugs = new Set(
+            this.linking ? this.savedGroups().flat() : []
+        );
 
-            card.classList.toggle('selected-for-group', selected);
-            card.classList.toggle('cursor-crosshair', this.linking);
+        for (const slug of this.editingGroup ?? []) {
+            unavailableSlugs.delete(slug);
+        }
+
+        const selectedSlugs = new Set(this.selectedSlugs);
+
+        this.gridTarget.querySelectorAll<HTMLElement>(
+            ".featured-item"
+        ).forEach(card => {
+            const slug = this.showSlug(card);
+
+            const unavailable =
+                this.linking && unavailableSlugs.has(slug);
+
+            card.classList.toggle(
+                "selected-for-group", selectedSlugs.has(slug)
+            );
+
+            card.classList.toggle(
+                "fusion-unavailable", unavailable
+            );
+
+            card.classList.toggle(
+                "cursor-crosshair", this.linking && !unavailable
+            );
+
+            if (unavailable) {
+                card.setAttribute("aria-disabled", "true");
+            } else {
+                card.removeAttribute("aria-disabled");
+            }
         });
     }
     private selectionBounds(groups: HTMLElement[]) {
@@ -3131,6 +3200,9 @@ private renderBoardLayout() {
         if (
             (!rightButton && !shiftDrag) ||
             !this.canSelectGroups() ||
+            this.gridTarget.querySelector(
+                ".contextual-group-editing"
+            ) ||
             this.groupMarquee
         ) return;
 

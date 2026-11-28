@@ -14,15 +14,17 @@
 
     <div class="concert-recording-badges">
 
-      <% if show.recordings.where(is_active: true).all?(&:is_incomplete) %>
+      <% active_recordings = show.recordings.where(is_active: true).to_a %>
+
+      <% if active_recordings.any? && active_recordings.all?(&:is_incomplete) %>
         <span class="badge badge-error bg-opacity-60 backdrop-blur shadow">
           Incomplete
         </span>
       <% end %>
 
       <span class="badge badge-primary bg-opacity-60 backdrop-blur shadow">
-        <%= show.recordings.where(is_active: true).count %>
-        tape<%= 's' unless show.recordings.where(is_active: true).count == 1 %>
+        <%= active_recordings.size %>
+        tape<%= 's' unless active_recordings.size == 1 %>
       </span>
 
       <% if show.duration&.nonzero? %>
